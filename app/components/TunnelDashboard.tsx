@@ -30,8 +30,11 @@ export function TunnelDashboard({ company, data }: TunnelDashboardProps) {
       <div className="mx-auto max-w-7xl space-y-6">
         <header className="tunnel-report-header rounded-lg border border-slate-200 bg-white p-5 shadow-sm md:p-6">
           <div className="relative z-10">
-            <Link href="/" className="mb-5 inline-flex text-sm font-medium text-slate-500 transition hover:text-slate-950">
-              New analysis
+            <Link
+              href="/"
+              className="mb-5 inline-flex items-center rounded-md border border-slate-200 bg-white/80 px-3 py-1.5 text-sm font-medium text-slate-600 shadow-sm backdrop-blur transition hover:border-slate-300 hover:bg-white hover:text-slate-950"
+            >
+              &lt;- New Analysis
             </Link>
             <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
               <div>
