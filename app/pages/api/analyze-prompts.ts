@@ -1,5 +1,7 @@
 import { aggregateAnalyses } from "@/lib/aggregation";
 import {
+  LlmInsightFields,
+  batchLlmAnalyze,
   buildPromptAnalysis,
   deterministicAnalyze,
 } from "@/lib/analysis";
@@ -9,8 +11,8 @@ import {
   AnalysisResponse,
   CompanyInput,
   GeneratedPrompt,
-  PromptAnalysisDetails,
   PromptAnalysis,
+  PromptAnalysisDetails,
 } from "@/types";
 import type { NextApiRequest, NextApiResponse } from "next";
 
@@ -44,42 +46,8 @@ Rules:
 - Keep each response short and direct.
 - Return parseable JSON only (no markdown).`;
 
-const ANALYSIS_SYSTEM_INSTRUCTION = `You are Tunnel's response analysis engine.
-
-You analyze how an AI assistant represented a target company in responses.
-
-Return ONLY valid JSON in this shape:
-{
-  "analyses": [
-    {
-      "promptId": "p1",
-      "targetMentioned": true,
-      "targetRank": 2,
-      "mentionedCompetitors": ["Vivino"],
-      "allMentionedCompanies": ["Vivino", "WineFind", "CellarTracker"],
-      "sentiment": "positive",
-      "targetDescription": "WineFind is described as ...",
-      "possibleInaccuracies": [],
-      "competitorWon": false,
-      "explanation": "Short explanation.",
-      "usefulQuote": "Short quote."
-    }
-  ]
-}
-
-Rules:
-- If target is not mentioned, set targetRank to null and sentiment to "not_mentioned".
-- Sentiment must be one of: positive, neutral, negative, not_mentioned.
-- competitorWon is true when competitors appear and target does not.
-- Do not invent facts not present in response.
-- Return parseable JSON only.`;
-
 interface BatchedAnswersResponse {
   answers?: Array<{ promptId: string; response: string }>;
-}
-
-interface BatchedAnalysesResponse {
-  analyses?: Array<{ promptId: string } & Partial<PromptAnalysisDetails>>;
 }
 
 function fallbackResponse(company: CompanyInput, prompt: GeneratedPrompt): string {
@@ -132,96 +100,6 @@ async function generateBatchedAnswers(
   }, {});
 }
 
-async function analyzeBatchedResponses(
-  company: CompanyInput,
-  prompts: GeneratedPrompt[],
-  responses: Record<string, string>,
-): Promise<Record<string, PromptAnalysisDetails> | null> {
-  const payload = JSON.stringify({
-    target: company.companyName,
-    competitors: company.competitors || [],
-    rows: prompts.map((p) => ({
-      promptId: p.id,
-      prompt: p.prompt,
-      category: p.category,
-      response: responses[p.id] || "",
-    })),
-  });
-
-  const raw = await generateText({
-    systemInstruction: ANALYSIS_SYSTEM_INSTRUCTION,
-    prompt: payload,
-    expectJson: true,
-    // Batched analysis JSON can get large; if we hit an output cap we may end up with
-    // truncated/invalid JSON and be forced into deterministic fallback.
-    maxOutputTokens: 6500,
-    temperature: 0.2,
-  });
-
-  const parsed = safeParseJson<BatchedAnalysesResponse>(raw);
-  if (!parsed?.analyses?.length) {
-    console.warn(
-      "[analyze-prompts] Batched analyses JSON parse failed (or missing analyses). Raw (first 250 chars):",
-      raw.slice(0, 250),
-    );
-    console.warn(
-      "[analyze-prompts] Batched analyses JSON parse failed. Raw length and tail:",
-      { length: raw.length, tail: raw.slice(Math.max(0, raw.length - 250)) },
-    );
-    return null;
-  }
-
-  return parsed.analyses.reduce<Record<string, PromptAnalysisDetails>>((acc, item) => {
-    const matchingPrompt = prompts.find((p) => p.id === item.promptId);
-    if (!matchingPrompt) return acc;
-    const deterministic = deterministicAnalyze(
-      company,
-      matchingPrompt,
-      responses[matchingPrompt.id] || "",
-    );
-    acc[item.promptId] = {
-      ...deterministic,
-      ...item,
-      targetMentioned:
-        typeof item.targetMentioned === "boolean"
-          ? item.targetMentioned
-          : deterministic.targetMentioned,
-      targetRank: typeof item.targetRank === "number" ? item.targetRank : deterministic.targetRank,
-      mentionedCompetitors: Array.isArray(item.mentionedCompetitors)
-        ? item.mentionedCompetitors.filter((x): x is string => typeof x === "string")
-        : deterministic.mentionedCompetitors,
-      allMentionedCompanies: Array.isArray(item.allMentionedCompanies)
-        ? item.allMentionedCompanies.filter((x): x is string => typeof x === "string")
-        : deterministic.allMentionedCompanies,
-      possibleInaccuracies: Array.isArray(item.possibleInaccuracies)
-        ? item.possibleInaccuracies.filter((x): x is string => typeof x === "string")
-        : deterministic.possibleInaccuracies,
-      sentiment:
-        item.sentiment === "positive" ||
-        item.sentiment === "neutral" ||
-        item.sentiment === "negative" ||
-        item.sentiment === "not_mentioned"
-          ? item.sentiment
-          : deterministic.sentiment,
-      targetDescription:
-        typeof item.targetDescription === "string"
-          ? item.targetDescription
-          : deterministic.targetDescription,
-      competitorWon:
-        typeof item.competitorWon === "boolean"
-          ? item.competitorWon
-          : deterministic.competitorWon,
-      explanation:
-        typeof item.explanation === "string"
-          ? item.explanation
-          : deterministic.explanation,
-      usefulQuote:
-        typeof item.usefulQuote === "string" ? item.usefulQuote : deterministic.usefulQuote,
-    };
-    return acc;
-  }, {});
-}
-
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<AnalysisResponse | { error: string }>,
@@ -242,7 +120,7 @@ export default async function handler(
   const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
   let responsesByPrompt: Record<string, string> = {};
   let batchedAnswers: Record<string, string> | null = null;
-  let llmAnalysesByPrompt: Record<string, PromptAnalysisDetails> | null = null;
+  let insightsByPrompt: Record<string, LlmInsightFields> | null = null;
 
   if (!hasGeminiKey) {
     console.warn("[analyze-prompts] Missing GEMINI_API_KEY; using local fallback.");
@@ -271,28 +149,41 @@ export default async function handler(
 
   if (hasGeminiKey) {
     try {
-      llmAnalysesByPrompt = await analyzeBatchedResponses(
-        body.company,
-        body.prompts,
-        responsesByPrompt,
-      );
-      if (!llmAnalysesByPrompt) {
-        console.warn("[analyze-prompts] Failed to parse batched analyses JSON.");
+      const rows = body.prompts.map((p) => ({
+        promptId: p.id,
+        prompt: p.prompt,
+        category: p.category,
+        response: responsesByPrompt[p.id] || "",
+      }));
+      insightsByPrompt = await batchLlmAnalyze(body.company, rows);
+      if (!insightsByPrompt) {
+        console.warn("[analyze-prompts] No LLM insights available (batch failed or empty).");
       }
     } catch (err) {
-      console.warn("[analyze-prompts] Batched analysis call failed; using deterministic analysis.", err);
+      console.warn(
+        "[analyze-prompts] Batched insight call failed; using deterministic-only analysis.",
+        err,
+      );
     }
   }
 
   const analyses: PromptAnalysis[] = body.prompts.map((prompt) => {
     const response = responsesByPrompt[prompt.id] || "";
-    const details =
-      llmAnalysesByPrompt?.[prompt.id] ||
-      deterministicAnalyze(body.company, prompt, response);
-    return buildPromptAnalysis(prompt, response, details);
+    const base = deterministicAnalyze(body.company, prompt, response);
+    const insight = insightsByPrompt?.[prompt.id];
+
+    const merged: PromptAnalysisDetails = {
+      ...base,
+      targetDescription: insight?.targetDescription ?? base.targetDescription,
+      explanation: insight?.explanation ?? base.explanation,
+      possibleInaccuracies:
+        insight?.possibleInaccuracies ?? base.possibleInaccuracies ?? [],
+    };
+
+    return buildPromptAnalysis(prompt, response, merged);
   });
 
-  const fallbackAnalysisPrompts = body.prompts.filter((p) => !llmAnalysesByPrompt?.[p.id]);
+  const fallbackAnalysisPrompts = body.prompts.filter((p) => !insightsByPrompt?.[p.id]);
   console.warn(
     `[analyze-prompts] Analysis: using Gemini for ${
       body.prompts.length - fallbackAnalysisPrompts.length

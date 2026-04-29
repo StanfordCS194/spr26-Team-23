@@ -218,15 +218,15 @@ export function aggregateAnalyses(
       prompt: p.prompt,
       category: p.category,
       competitorMentions: p.analysis.mentionedCompetitors,
-      explanation: p.analysis.explanation,
+      explanation: p.analysis.explanation ?? "",
     }));
 
   const possibleInaccuracies = promptAnalyses
-    .filter((p) => p.analysis.possibleInaccuracies.length > 0)
+    .filter((p) => (p.analysis.possibleInaccuracies ?? []).length > 0)
     .map((p) => ({
       promptId: p.promptId,
       prompt: p.prompt,
-      items: p.analysis.possibleInaccuracies,
+      items: p.analysis.possibleInaccuracies ?? [],
     }));
 
   const baseStats: BaseStats = {

@@ -29,11 +29,12 @@ export interface PromptAnalysisDetails {
   mentionedCompetitors: string[];
   allMentionedCompanies: string[];
   sentiment: Sentiment;
-  targetDescription: string;
-  possibleInaccuracies: string[];
   competitorWon: boolean;
-  explanation: string;
   usefulQuote: string;
+  // LLM-enriched, optional fields (hybrid analysis)
+  targetDescription?: string;
+  explanation?: string;
+  possibleInaccuracies?: string[];
 }
 
 export interface PromptAnalysis {

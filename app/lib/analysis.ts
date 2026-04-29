@@ -70,119 +70,118 @@ export function deterministicAnalyze(
     mentionedCompetitors,
     allMentionedCompanies: ranked,
     sentiment,
-    targetDescription: targetMentioned ? extractFirstSentence(response) : "",
-    possibleInaccuracies: [],
     competitorWon: !targetMentioned && mentionedCompetitors.length > 0,
-    explanation: targetMentioned
-      ? `${company.companyName} appears in the response in position ${targetIndex + 1}.`
-      : `${company.companyName} is absent while ${mentionedCompetitors.length || 0} competitor(s) are discussed.`,
     usefulQuote: extractFirstSentence(response),
   };
 }
 
-const ANALYSIS_SYSTEM_INSTRUCTION = `You are Tunnel's response analysis engine.
+// -------- LLM insights (batched, interpretation-only) --------
 
-You analyze how an AI assistant represented a target company in a response.
+const INSIGHT_SYSTEM_INSTRUCTION = `You are Tunnel's response analysis engine.
 
-Given:
-- target company
-- competitors
-- original prompt
-- prompt category
-- AI response
+You are given multiple prompts and AI assistant responses for a target company.
 
-Return ONLY valid JSON with this shape:
+For each item, extract:
+- targetDescription: short phrase describing how the company is positioned in this response
+- explanation: 1–2 sentence interpretation of what this response suggests about the company's AI visibility
+- possibleInaccuracies: brief list of specific statements that might be inaccurate or misleading (empty array if none)
+
+Return ONLY valid JSON:
 {
-  "targetMentioned": boolean,
-  "targetRank": number | null,
-  "mentionedCompetitors": string[],
-  "allMentionedCompanies": string[],
-  "sentiment": "positive" | "neutral" | "negative" | "not_mentioned",
-  "targetDescription": string,
-  "possibleInaccuracies": string[],
-  "competitorWon": boolean,
-  "explanation": string,
-  "usefulQuote": string
+  "analyses": [
+    {
+      "promptId": "p1",
+      "targetDescription": "...",
+      "explanation": "...",
+      "possibleInaccuracies": []
+    }
+  ]
 }
 
 Rules:
-- If target is not mentioned, targetRank must be null and sentiment must be "not_mentioned".
-- competitorWon must be true when target is not mentioned but >= 1 competitor is.
-- usefulQuote must be a short verbatim snippet from the response if target is mentioned, else "".
-- Do not invent facts that are not present in the response.
-- Do not include markdown.
-- Return only valid parseable JSON.`;
+- Never change ranks or which companies are mentioned; only describe, interpret, or flag issues.
+- Do not hallucinate facts not present in the response text.
+- Keep targetDescription and explanation concise.
+- possibleInaccuracies must be [] if you are unsure.
+- Do not include markdown.`;
 
-const VALID_SENTIMENTS: Sentiment[] = ["positive", "neutral", "negative", "not_mentioned"];
-
-function normalizeDetails(parsed: Partial<PromptAnalysisDetails>): PromptAnalysisDetails {
-  const targetMentioned = !!parsed.targetMentioned;
-  const sentiment: Sentiment = VALID_SENTIMENTS.includes(parsed.sentiment as Sentiment)
-    ? (parsed.sentiment as Sentiment)
-    : targetMentioned
-      ? "neutral"
-      : "not_mentioned";
-
-  return {
-    targetMentioned,
-    targetRank: typeof parsed.targetRank === "number" ? parsed.targetRank : null,
-    mentionedCompetitors: Array.isArray(parsed.mentionedCompetitors)
-      ? parsed.mentionedCompetitors.filter((s): s is string => typeof s === "string")
-      : [],
-    allMentionedCompanies: Array.isArray(parsed.allMentionedCompanies)
-      ? parsed.allMentionedCompanies.filter((s): s is string => typeof s === "string")
-      : [],
-    sentiment,
-    targetDescription: typeof parsed.targetDescription === "string" ? parsed.targetDescription : "",
-    possibleInaccuracies: Array.isArray(parsed.possibleInaccuracies)
-      ? parsed.possibleInaccuracies.filter((s): s is string => typeof s === "string")
-      : [],
-    competitorWon: !!parsed.competitorWon,
-    explanation: typeof parsed.explanation === "string" ? parsed.explanation : "",
-    usefulQuote: typeof parsed.usefulQuote === "string" ? parsed.usefulQuote : "",
-  };
+interface InsightRowInput {
+  promptId: string;
+  prompt: string;
+  category: string;
+  response: string;
 }
 
-export async function llmAnalyze(
+interface BatchedInsightResponse {
+  analyses?: Array<{
+    promptId?: string;
+    targetDescription?: string;
+    explanation?: string;
+    possibleInaccuracies?: string[];
+  }>;
+}
+
+export type LlmInsightFields = Pick<
+  PromptAnalysisDetails,
+  "targetDescription" | "explanation" | "possibleInaccuracies"
+>;
+
+export async function batchLlmAnalyze(
   company: CompanyInput,
-  prompt: GeneratedPrompt,
-  response: string,
-): Promise<PromptAnalysisDetails | null> {
-  if (!response.trim()) return null;
+  rows: InsightRowInput[],
+): Promise<Record<string, LlmInsightFields> | null> {
+  if (!rows.length) return {};
+  if (!process.env.GEMINI_API_KEY) return null;
 
+  const payload = JSON.stringify({
+    target: company.companyName,
+    competitors: company.competitors || [],
+    rows,
+  });
+
+  let raw = "";
   try {
-    const userPayload = JSON.stringify({
-      target: company.companyName,
-      competitors: company.competitors || [],
-      prompt: prompt.prompt,
-      category: prompt.category,
-      response,
-    });
-
-    const raw = await generateText({
-      systemInstruction: ANALYSIS_SYSTEM_INSTRUCTION,
-      prompt: userPayload,
+    raw = await generateText({
+      systemInstruction: INSIGHT_SYSTEM_INSTRUCTION,
+      prompt: payload,
       expectJson: true,
-      maxOutputTokens: 600,
+      maxOutputTokens: 3000,
+      temperature: 0.2,
     });
-
-    const parsed = safeParseJson<Partial<PromptAnalysisDetails>>(raw);
-    if (!parsed) return null;
-
-    return normalizeDetails(parsed);
-  } catch {
+  } catch (err) {
+    console.warn("[analysis] batchLlmAnalyze Gemini call failed, falling back to deterministic-only.", err);
     return null;
   }
-}
 
-export async function analyzeResponseStructured(
-  company: CompanyInput,
-  prompt: GeneratedPrompt,
-  response: string,
-): Promise<PromptAnalysisDetails> {
-  const llm = await llmAnalyze(company, prompt, response);
-  if (llm) return llm;
-  return deterministicAnalyze(company, prompt, response);
+  const parsed = safeParseJson<BatchedInsightResponse>(raw);
+  if (!parsed?.analyses?.length) {
+    console.warn(
+      "[analysis] batchLlmAnalyze JSON parse failed or empty analyses. Raw (first 250 chars):",
+      raw.slice(0, 250),
+    );
+    return null;
+  }
+
+  return parsed.analyses.reduce<Record<string, LlmInsightFields>>((acc, item) => {
+    if (!item?.promptId) return acc;
+    acc[item.promptId] = {
+      targetDescription:
+        typeof item.targetDescription === "string" && item.targetDescription.trim()
+          ? item.targetDescription.trim()
+          : undefined,
+      explanation:
+        typeof item.explanation === "string" && item.explanation.trim()
+          ? item.explanation.trim()
+          : undefined,
+      possibleInaccuracies: Array.isArray(item.possibleInaccuracies)
+        ? item.possibleInaccuracies
+            .filter((s): s is string => typeof s === "string")
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0)
+        : undefined,
+    };
+    return acc;
+  }, {});
 }
 
 export function buildPromptAnalysis(
