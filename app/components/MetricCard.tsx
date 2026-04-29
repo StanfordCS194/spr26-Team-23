@@ -6,10 +6,14 @@ interface MetricCardProps {
 
 export function MetricCard({ label, value, helper }: MetricCardProps) {
   return (
-    <div className="rounded-xl border border-blue-500/30 bg-slate-950/80 p-9 shadow-[0_0_30px_rgba(37,99,235,0.12)]">
-      <p className="text-lg text-blue-50">{label}</p>
-      <p className="mt-2 text-5xl font-semibold text-blue-100">{value}</p>
-      {helper ? <p className="mt-2 text-lg text-blue-100/95">{helper}</p> : null}
+    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+        {label}
+      </p>
+      <p className="mt-3 break-words text-3xl font-semibold tracking-tight text-slate-950">
+        {value}
+      </p>
+      {helper ? <p className="mt-2 text-sm leading-6 text-slate-500">{helper}</p> : null}
     </div>
   );
 }
