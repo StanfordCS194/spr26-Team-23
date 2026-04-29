@@ -14,6 +14,7 @@ export interface CompanyInput {
   category: string;
   competitors?: string[];
   numberOfPrompts: number;
+  logoUrl?: string;
 }
 
 export interface GeneratedPrompt {

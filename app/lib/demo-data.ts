@@ -16,6 +16,7 @@ export const DEMO_COMPANY: CompanyInput = {
   category: "wine apps / restaurant wine decision tools",
   competitors: ["Vivino", "CellarTracker", "Delectable"],
   numberOfPrompts: 20,
+  logoUrl: "https://www.google.com/s2/favicons?domain=vivino.com&sz=256",
 };
 
 export const DEMO_PROMPTS: GeneratedPrompt[] = [
