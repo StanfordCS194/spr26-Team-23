@@ -10,7 +10,7 @@ It simulates realistic prompts, runs AI responses, analyzes visibility vs compet
 
 1. Install dependencies:
    ```bash
-   npm install
+   pnpm install
    ```
 2. Add your Gemini API key in `app/.env.local`:
    ```bash
@@ -20,7 +20,7 @@ It simulates realistic prompts, runs AI responses, analyzes visibility vs compet
    You can override the model by setting `GEMINI_MODEL` in `app/.env.local`.
 3. Run the app:
    ```bash
-   npm run dev
+   pnpm dev
    ```
 4. Open [http://localhost:3000](http://localhost:3000)
 
