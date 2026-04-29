@@ -5,6 +5,8 @@ export type PromptCategory =
   | "niche"
   | "purchase";
 
+export type Sentiment = "positive" | "neutral" | "negative" | "not_mentioned";
+
 export interface CompanyInput {
   companyName: string;
   website: string;
@@ -21,20 +23,27 @@ export interface GeneratedPrompt {
   rationale: string;
 }
 
+export interface PromptAnalysisDetails {
+  targetMentioned: boolean;
+  targetRank: number | null;
+  mentionedCompetitors: string[];
+  allMentionedCompanies: string[];
+  sentiment: Sentiment;
+  targetDescription: string;
+  possibleInaccuracies: string[];
+  competitorWon: boolean;
+  explanation: string;
+  usefulQuote: string;
+}
+
 export interface PromptAnalysis {
   promptId: string;
   prompt: string;
   category: PromptCategory;
+  rationale: string;
   response: string;
-  analysis: {
-    targetMentioned: boolean;
-    targetRank: number | null;
-    mentionedCompetitors: string[];
-    allMentionedCompanies: string[];
-    sentiment: "positive" | "neutral" | "negative" | "not_mentioned";
-    explanation: string;
-    usefulQuote: string;
-  };
+  error?: string;
+  analysis: PromptAnalysisDetails;
 }
 
 export interface CompetitorStats {
@@ -43,15 +52,34 @@ export interface CompetitorStats {
   share: number;
 }
 
+export interface CategoryVisibility {
+  mentioned: number;
+  total: number;
+  percent: number;
+}
+
+export interface MissedOpportunity {
+  promptId: string;
+  prompt: string;
+  category: PromptCategory;
+  competitorMentions: string[];
+  explanation: string;
+}
+
+export interface InaccuracyEntry {
+  promptId: string;
+  prompt: string;
+  items: string[];
+}
+
 export interface AggregateStats {
   visibilityScore: number;
-  visibilityByCategory: Record<PromptCategory, number>;
+  visibilityCount: { mentioned: number; total: number };
+  visibilityByCategory: Record<PromptCategory, CategoryVisibility>;
   averageRank: number | null;
   competitorMentionCounts: Record<string, number>;
-  shareOfVoice: {
-    target: number;
-    competitors: CompetitorStats[];
-  };
+  shareOfVoice: { target: number; competitors: CompetitorStats[] };
+  topCompetitor: { name: string; mentions: number } | null;
   promptsWhereCompetitorWins: {
     promptId: string;
     prompt: string;
@@ -60,12 +88,10 @@ export interface AggregateStats {
   bestPerformingCategory: PromptCategory;
   weakestCategory: PromptCategory;
   extractedDescriptions: string[];
-  topMissedOpportunities: {
-    promptId: string;
-    prompt: string;
-    category: PromptCategory;
-    competitorMentions: string[];
-  }[];
+  topMissedOpportunities: MissedOpportunity[];
+  possibleInaccuracies: InaccuracyEntry[];
+  aiPositioningSummary: string;
+  recommendations: string[];
 }
 
 export interface AnalysisResponse {

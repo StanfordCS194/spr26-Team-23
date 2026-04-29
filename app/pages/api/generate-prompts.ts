@@ -1,8 +1,9 @@
-import { getOpenAIClient } from "@/lib/openai";
+import { generateText } from "@/lib/gemini";
+import { safeParseJson } from "@/lib/json-repair";
 import { CompanyInput, GeneratedPrompt, PromptCategory } from "@/types";
 import type { NextApiRequest, NextApiResponse } from "next";
 
-const categories: PromptCategory[] = [
+const VALID_CATEGORIES: PromptCategory[] = [
   "discovery",
   "comparison",
   "use_case",
@@ -10,17 +11,56 @@ const categories: PromptCategory[] = [
   "purchase",
 ];
 
+const SYSTEM_INSTRUCTION = `You are Tunnel's prompt generation engine.
+
+Tunnel helps companies understand how AI assistants represent, recommend, and compare them.
+
+Given a company name, website, product description, category/industry, competitors, and desired number of prompts, generate realistic prompts that potential customers might ask an AI assistant when discovering or evaluating products in this category.
+
+Your goal is NOT to flatter the company. Your goal is to create prompts that fairly test whether the company appears in relevant AI-generated answers.
+
+Generate prompts across these categories:
+1. Discovery: broad "best tools/apps/products for X" prompts
+2. Comparison: alternatives, competitors, "X vs Y" prompts
+3. Use case: prompts based on specific customer jobs-to-be-done
+4. Niche: prompts where the company's differentiation should matter
+5. Purchase intent: prompts from users close to choosing a product
+
+Each prompt should sound natural and user-like, not like market research.
+
+Return ONLY valid JSON in this format:
+{
+  "prompts": [
+    {
+      "id": "p1",
+      "category": "discovery",
+      "prompt": "...",
+      "rationale": "Why this prompt is useful for testing AI visibility."
+    }
+  ]
+}
+
+Rules:
+- Generate exactly the requested number of prompts.
+- Include a balanced mix of categories.
+- Include competitor-focused prompts when competitors are provided.
+- Include niche prompts based on the product description.
+- Do not assume the target company is well-known.
+- Do not mention Tunnel.
+- Do not include markdown.
+- Return valid parseable JSON only.`;
+
 function fallbackPrompts(input: CompanyInput): GeneratedPrompt[] {
   const competitors = input.competitors?.join(", ") || "relevant alternatives";
-  const generated: Omit<GeneratedPrompt, "id">[] = [
+  const templates: Omit<GeneratedPrompt, "id">[] = [
     {
       category: "discovery",
-      prompt: `What are the top ${input.category} products today?`,
-      rationale: "Broad discovery query.",
+      prompt: `What are the best ${input.category} options?`,
+      rationale: "Broad category discovery.",
     },
     {
       category: "comparison",
-      prompt: `How does ${input.companyName} compare to ${competitors}?`,
+      prompt: `${input.companyName} vs ${competitors}`,
       rationale: "Direct competitor comparison.",
     },
     {
@@ -30,7 +70,7 @@ function fallbackPrompts(input: CompanyInput): GeneratedPrompt[] {
     },
     {
       category: "niche",
-      prompt: `Which ${input.category} tools are best for specialized needs?`,
+      prompt: `Best ${input.category} tools for specialized needs`,
       rationale: "Niche differentiation.",
     },
     {
@@ -40,15 +80,26 @@ function fallbackPrompts(input: CompanyInput): GeneratedPrompt[] {
     },
   ];
 
-  return Array.from({ length: input.numberOfPrompts }).map((_, index) => {
-    const base = generated[index % generated.length];
+  return Array.from({ length: input.numberOfPrompts }).map((_, i) => {
+    const base = templates[i % templates.length];
     return {
-      id: `prompt-${index + 1}`,
+      id: `p${i + 1}`,
       category: base.category,
       prompt: base.prompt,
       rationale: base.rationale,
     };
   });
+}
+
+interface ParsedPrompt {
+  id?: string;
+  category: PromptCategory;
+  prompt: string;
+  rationale: string;
+}
+
+interface ParsedResponse {
+  prompts?: ParsedPrompt[];
 }
 
 export default async function handler(
@@ -62,47 +113,52 @@ export default async function handler(
   const input = req.body as CompanyInput;
 
   if (!input?.companyName || !input?.category || !input?.description) {
-    return res.status(400).json({ error: "Missing required company fields" });
+    return res.status(400).json({ error: "Missing required company fields." });
+  }
+
+  if (!process.env.GEMINI_API_KEY) {
+    return res.status(200).json(fallbackPrompts(input));
   }
 
   try {
-    const client = getOpenAIClient();
-    const completion = await client.responses.create({
-      model: "gpt-4.1-mini",
-      input: [
-        {
-          role: "system",
-          content:
-            "You are generating realistic prompts users would ask AI assistants when discovering, comparing, and evaluating products in a category. Include broad discovery queries, competitor comparisons, use-case queries, niche differentiation queries, and purchase intent queries. The goal is to test whether a specific company appears in AI responses.",
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            company: input,
-            instructions:
-              "Return strictly JSON: { prompts: Array<{ category, prompt, rationale }> } with categories in discovery|comparison|use_case|niche|purchase",
-          }),
-        },
-      ],
+    const userPayload = JSON.stringify({
+      companyName: input.companyName,
+      website: input.website,
+      description: input.description,
+      category: input.category,
+      competitors: input.competitors || [],
+      numberOfPrompts: input.numberOfPrompts,
     });
 
-    const raw = completion.output_text;
-    const parsed = JSON.parse(raw) as {
-      prompts: Array<{ category: PromptCategory; prompt: string; rationale: string }>;
-    };
+    const raw = await generateText({
+      systemInstruction: SYSTEM_INSTRUCTION,
+      prompt: userPayload,
+      expectJson: true,
+      maxOutputTokens: 1600,
+      temperature: 0.7,
+    });
 
-    const prompts = (parsed.prompts || []).slice(0, input.numberOfPrompts).map((item, i) => ({
-      id: `prompt-${i + 1}`,
-      category: categories.includes(item.category) ? item.category : "discovery",
-      prompt: item.prompt,
-      rationale: item.rationale,
-    }));
+    const parsed = safeParseJson<ParsedResponse>(raw);
+    if (!parsed?.prompts?.length) {
+      return res.status(200).json(fallbackPrompts(input));
+    }
 
-    return res.status(200).json(
-      prompts.length > 0
-        ? prompts
-        : fallbackPrompts(input),
-    );
+    const prompts: GeneratedPrompt[] = parsed.prompts
+      .slice(0, input.numberOfPrompts)
+      .map((item, i) => {
+        const category = VALID_CATEGORIES.includes(item.category)
+          ? item.category
+          : VALID_CATEGORIES[i % VALID_CATEGORIES.length];
+        return {
+          id: typeof item.id === "string" && item.id.trim() ? item.id : `p${i + 1}`,
+          category,
+          prompt: typeof item.prompt === "string" ? item.prompt : "",
+          rationale: typeof item.rationale === "string" ? item.rationale : "",
+        };
+      })
+      .filter((p) => p.prompt.length > 0);
+
+    return res.status(200).json(prompts.length ? prompts : fallbackPrompts(input));
   } catch {
     return res.status(200).json(fallbackPrompts(input));
   }
