@@ -6,13 +6,15 @@ interface RecommendationsPanelProps {
 
 export function RecommendationsPanel({ stats }: RecommendationsPanelProps) {
   return (
-    <section className="rounded-xl border border-blue-500/30 bg-slate-950/80 p-9 shadow-[0_0_30px_rgba(37,99,235,0.12)]">
-      <h3 className="text-2xl font-semibold text-blue-100">Recommendations</h3>
-      <ul className="mt-4 space-y-4">
+    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+      <h3 className="text-xl font-semibold tracking-tight text-slate-950">
+        Recommendations
+      </h3>
+      <ul className="mt-4 grid gap-3 md:grid-cols-2">
         {stats.recommendations.map((rec) => (
           <li
             key={rec}
-            className="rounded-lg border border-blue-500/25 bg-blue-500/10 p-4 text-lg text-blue-50"
+            className="rounded-md border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700"
           >
             {rec}
           </li>

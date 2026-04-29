@@ -5,13 +5,22 @@ interface VisibilityScoreCardProps {
 }
 
 export function VisibilityScoreCard({ score, mentioned, total }: VisibilityScoreCardProps) {
-  const tone = score >= 70 ? "text-cyan-300" : score >= 40 ? "text-blue-300" : "text-rose-300";
+  const tone = score >= 70 ? "text-emerald-600" : score >= 40 ? "text-sky-700" : "text-rose-600";
+  const barTone = score >= 70 ? "bg-emerald-500" : score >= 40 ? "bg-sky-500" : "bg-rose-500";
 
   return (
-    <div className="rounded-xl border border-blue-500/30 bg-slate-950/80 p-9 shadow-[0_0_30px_rgba(37,99,235,0.12)]">
-      <p className="text-lg text-blue-50">Visibility Score</p>
-      <p className={`mt-2 text-5xl font-bold ${tone}`}>{score}%</p>
-      <p className="mt-2 text-lg text-blue-100/95">
+    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+        Visibility Score
+      </p>
+      <p className={`mt-3 text-4xl font-semibold tracking-tight ${tone}`}>{score}%</p>
+      <div className="mt-4 h-2 rounded-full bg-slate-100">
+        <div
+          className={`h-2 rounded-full ${barTone}`}
+          style={{ width: `${Math.min(score, 100)}%` }}
+        />
+      </div>
+      <p className="mt-3 text-sm leading-6 text-slate-500">
         Appeared in {mentioned} / {total} prompts.
       </p>
     </div>

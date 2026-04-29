@@ -17,25 +17,27 @@ export function CompetitorComparison({ stats }: CompetitorComparisonProps) {
   ].sort((a, b) => b.share - a.share);
 
   return (
-    <section className="rounded-xl border border-blue-500/30 bg-slate-950/80 p-9 shadow-[0_0_30px_rgba(37,99,235,0.12)]">
-      <h3 className="text-2xl font-semibold text-blue-100">Competitor Share of Voice</h3>
-      <p className="mt-1 text-lg text-blue-100/85">
+    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+      <h3 className="text-xl font-semibold tracking-tight text-slate-950">
+        Competitor Share of Voice
+      </h3>
+      <p className="mt-1 text-sm leading-6 text-slate-500">
         How often each company is mentioned across AI responses.
       </p>
-      <div className="mt-5 space-y-3">
+      <div className="mt-5 space-y-4">
         {rows.map((row) => (
-          <div key={row.label} className="space-y-1">
-            <div className="flex items-center justify-between text-lg">
-              <span className={row.isTarget ? "font-semibold text-cyan-200" : "text-blue-50"}>
+          <div key={row.label} className="space-y-2">
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className={row.isTarget ? "font-semibold text-emerald-700" : "font-medium text-slate-700"}>
                 {row.label}
               </span>
-              <span className="text-blue-100/95">
-                {row.mentions} · {row.share}%
+              <span className="text-slate-500">
+                {row.mentions} - {row.share}%
               </span>
             </div>
-            <div className="h-2 rounded-full bg-blue-950">
+            <div className="h-2 rounded-full bg-slate-100">
               <div
-                className={`h-2 rounded-full ${row.isTarget ? "bg-cyan-400" : "bg-blue-400"}`}
+                className={`h-2 rounded-full ${row.isTarget ? "bg-emerald-500" : "bg-slate-400"}`}
                 style={{ width: `${Math.min(row.share, 100)}%` }}
               />
             </div>

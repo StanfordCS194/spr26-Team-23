@@ -2,6 +2,7 @@
 
 import { DEMO_COMPANY, getDemoAnalysisResponse } from "@/lib/demo-data";
 import { CompanyInput, GeneratedPrompt } from "@/types";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { PromptGenerationPreview } from "./PromptGenerationPreview";
@@ -24,7 +25,7 @@ const defaultState: CompanyInput = {
 
 function Spinner() {
   return (
-    <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+    <svg className="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
     </svg>
@@ -32,9 +33,12 @@ function Spinner() {
 }
 
 const inputClass =
-  "h-16 w-full rounded-xl border border-blue-500/35 bg-slate-900/80 px-4 py-3 text-lg text-blue-50 placeholder:text-blue-100/60 focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-500/45";
+  "h-11 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 shadow-sm placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100";
 
-const labelClass = "mb-2 block text-base font-medium tracking-[0.01em] text-blue-100/80";
+const textareaClass =
+  "min-h-24 w-full resize-y rounded-md border border-slate-300 bg-white px-3 py-2 text-sm leading-6 text-slate-950 shadow-sm placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100";
+
+const labelClass = "mb-2 block text-sm font-medium text-slate-700";
 
 export function TunnelInputForm() {
   const router = useRouter();
@@ -119,12 +123,24 @@ export function TunnelInputForm() {
   };
 
   return (
-    <div className="space-y-7">
+    <div className="space-y-6">
       <form
         onSubmit={onGeneratePrompts}
-        className="rounded-2xl border border-blue-500/30 bg-slate-950/85 p-9 shadow-[0_0_45px_rgba(59,130,246,0.14)] backdrop-blur"
+        className="tunnel-form-card rounded-lg border border-slate-200 bg-white p-5 shadow-sm md:p-6"
       >
-        <div className="grid gap-6 md:grid-cols-2">
+        <div className="mb-6 flex items-start gap-3 border-b border-slate-200 pb-5">
+          <span className="tunnel-card-mark flex-shrink-0" aria-hidden="true" />
+          <div>
+            <h2 className="text-xl font-semibold tracking-tight text-slate-950">
+              Audit setup
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Use your live category language and closest competitors.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid gap-5 md:grid-cols-2">
           <div>
             <label htmlFor="companyName" className={labelClass}>
               Company name
@@ -156,13 +172,16 @@ export function TunnelInputForm() {
                 required
               />
               {form.logoUrl && (
-                <img
-                  src={form.logoUrl}
-                  alt=""
-                  width={40}
-                  height={40}
-                  className="rounded-lg flex-shrink-0"
-                />
+                <span className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50">
+                  <Image
+                    src={form.logoUrl}
+                    alt=""
+                    width={28}
+                    height={28}
+                    unoptimized
+                    className="rounded-sm"
+                  />
+                </span>
               )}
             </div>
           </div>
@@ -171,9 +190,9 @@ export function TunnelInputForm() {
             <label htmlFor="description" className={labelClass}>
               One-sentence product description
             </label>
-            <input
+            <textarea
               id="description"
-              className={inputClass}
+              className={textareaClass}
               placeholder="What does your product do?"
               value={form.description}
               onChange={(e) => update("description", e.target.value)}
@@ -220,23 +239,26 @@ export function TunnelInputForm() {
             <label htmlFor="numberOfPrompts" className={labelClass}>
               Number of prompts
             </label>
-            <input
-              id="numberOfPrompts"
-              className={inputClass}
-              type="number"
-              min={5}
-              max={50}
-              placeholder="10"
-              value={form.numberOfPrompts}
-              onChange={(e) => update("numberOfPrompts", Number(e.target.value || 20))}
-            />
+            <div className="flex items-center gap-3">
+              <input
+                id="numberOfPrompts"
+                className={inputClass}
+                type="number"
+                min={5}
+                max={50}
+                placeholder="10"
+                value={form.numberOfPrompts}
+                onChange={(e) => update("numberOfPrompts", Number(e.target.value || 20))}
+              />
+              <span className="whitespace-nowrap text-sm text-slate-500">5 to 50</span>
+            </div>
           </div>
         </div>
 
-        <div className="mt-7 flex flex-wrap gap-5">
+        <div className="mt-6 flex flex-wrap gap-3 border-t border-slate-200 pt-5">
           <button
             type="submit"
-            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-4 text-lg font-semibold text-blue-50 hover:bg-blue-500 disabled:opacity-60"
+            className="inline-flex h-11 items-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             disabled={loading}
           >
             {loadingStep === "generating" && <Spinner />}
@@ -244,7 +266,7 @@ export function TunnelInputForm() {
           </button>
           <button
             type="button"
-            className="inline-flex items-center gap-2 rounded-xl border border-blue-400/45 bg-slate-900/70 px-6 py-4 text-lg font-semibold text-blue-100 hover:bg-slate-800 disabled:opacity-60"
+            className="inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             disabled={!prompts.length || loading}
             onClick={onRunAnalysis}
           >
@@ -253,7 +275,7 @@ export function TunnelInputForm() {
           </button>
           <button
             type="button"
-            className="rounded-xl border border-cyan-300/40 bg-cyan-500/12 px-6 py-4 text-lg font-semibold text-cyan-50 hover:bg-cyan-500/20"
+            className="inline-flex h-11 items-center rounded-md border border-emerald-200 bg-emerald-50 px-4 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100"
             onClick={onUseDemoData}
           >
             Use Demo Data
@@ -261,16 +283,20 @@ export function TunnelInputForm() {
         </div>
 
         {loadingStep === "analyzing" && (
-          <p className="mt-4 animate-pulse text-base text-blue-300">
-            Asking AI {form.numberOfPrompts} questions about {form.companyName || "your company"}... this usually takes 15–30 seconds.
+          <p className="mt-4 animate-pulse text-sm text-sky-700">
+            Asking AI {form.numberOfPrompts} questions about {form.companyName || "your company"}... this usually takes 15-30 seconds.
           </p>
         )}
         {loadingStep === "generating" && (
-          <p className="mt-4 animate-pulse text-base text-blue-300">
+          <p className="mt-4 animate-pulse text-sm text-sky-700">
             Generating {form.numberOfPrompts} prompts...
           </p>
         )}
-        {error ? <p className="mt-4 text-lg text-rose-200">{error}</p> : null}
+        {error ? (
+          <p className="mt-4 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            {error}
+          </p>
+        ) : null}
       </form>
 
       <PromptGenerationPreview prompts={prompts} />

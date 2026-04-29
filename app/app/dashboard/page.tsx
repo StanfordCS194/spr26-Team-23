@@ -42,9 +42,9 @@ export default function DashboardPage() {
     return (
       <>
         <TunnelDashboard company={DEMO_COMPANY} data={demo} />
-        <div className="fixed bottom-4 right-4 rounded-lg border border-blue-500/40 bg-slate-950/90 px-4 py-3 text-2xl text-blue-100 shadow-[0_0_24px_rgba(59,130,246,0.22)] backdrop-blur">
+        <div className="fixed bottom-4 left-4 right-4 z-10 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-lg shadow-slate-900/10 sm:left-auto sm:max-w-sm">
           Showing demo report.{" "}
-          <Link href="/" className="font-medium text-cyan-200 underline">
+          <Link href="/" className="font-semibold text-slate-950 underline underline-offset-4">
             Run your own analysis
           </Link>
         </div>

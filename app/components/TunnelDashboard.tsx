@@ -1,4 +1,5 @@
 import { AnalysisResponse, CompanyInput } from "@/types";
+import Image from "next/image";
 import Link from "next/link";
 import { CategoryBreakdown } from "./CategoryBreakdown";
 import { CompetitorComparison } from "./CompetitorComparison";
@@ -19,39 +20,56 @@ export function TunnelDashboard({ company, data }: TunnelDashboardProps) {
   const stats = data.aggregateStats;
   const topCompetitorLabel = stats.topCompetitor
     ? stats.topCompetitor.name
-    : "—";
+    : "-";
   const topCompetitorHelper = stats.topCompetitor
     ? `${stats.topCompetitor.mentions} mention${stats.topCompetitor.mentions === 1 ? "" : "s"} across prompts`
     : "No competitor mentions detected";
 
   return (
-    <main className="min-h-screen px-4 py-8 md:px-10">
-      <div className="mx-auto max-w-7xl space-y-7">
-        <header className="rounded-2xl border border-blue-500/30 bg-slate-950/85 p-9 shadow-[0_0_35px_rgba(30,64,175,0.25)] backdrop-blur">
-          <Link href="/" className="inline-flex items-center gap-1 text-base text-blue-300 hover:text-blue-100 mb-4">
-            ← New Analysis
-          </Link>
-          <p className="text-lg uppercase tracking-[0.18em] text-blue-100/90">
-            Tunnel Report
-          </p>
-          <div className="mt-1 flex items-center gap-4">
-            {company.logoUrl && (
-              <img
-                src={company.logoUrl}
-                alt=""
-                width={56}
-                height={56}
-                className="rounded-xl"
-              />
-            )}
-            <h1 className="text-5xl font-bold tracking-tight text-blue-100">
-              {company.companyName}
-            </h1>
+    <main className="min-h-screen px-5 py-6 text-slate-950 md:px-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <header className="tunnel-report-header rounded-lg border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <div className="relative z-10">
+            <Link href="/" className="mb-5 inline-flex text-sm font-medium text-slate-500 transition hover:text-slate-950">
+              New analysis
+            </Link>
+            <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Tunnel report
+                </p>
+                <div className="mt-3 flex items-start gap-4">
+                  {company.logoUrl && (
+                    <span className="flex h-12 w-12 items-center justify-center rounded-lg border border-slate-200 bg-white shadow-sm">
+                      <Image
+                        src={company.logoUrl}
+                        alt=""
+                        width={32}
+                        height={32}
+                        unoptimized
+                        className="rounded-sm"
+                      />
+                    </span>
+                  )}
+                  <div>
+                    <h1 className="text-4xl font-semibold tracking-tight text-slate-950 md:text-5xl">
+                      {company.companyName}
+                    </h1>
+                    <p className="mt-2 max-w-3xl text-base text-slate-600">
+                      {company.description}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white/90 px-4 py-3 text-sm text-slate-600 shadow-sm backdrop-blur">
+                <p className="font-medium text-slate-950">{company.website}</p>
+                <p>{company.category}</p>
+              </div>
+            </div>
           </div>
-          <p className="mt-2 text-lg text-blue-100/90">See how AI sees you</p>
         </header>
 
-        <section className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+        <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <VisibilityScoreCard
             score={stats.visibilityScore}
             mentioned={stats.visibilityCount.mentioned}
@@ -59,7 +77,7 @@ export function TunnelDashboard({ company, data }: TunnelDashboardProps) {
           />
           <MetricCard
             label="Avg Rank"
-            value={stats.averageRank ?? "—"}
+            value={stats.averageRank ?? "-"}
             helper="Average position when mentioned"
           />
           <MetricCard
