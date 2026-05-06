@@ -284,25 +284,30 @@ export default async function handler(
     }
   }
 
-  const analyses: PromptAnalysis[] = body.prompts.map((prompt) => {
-    const response = responsesByPrompt[prompt.id] || "";
-    const details =
-      llmAnalysesByPrompt?.[prompt.id] ||
-      deterministicAnalyze(body.company, prompt, response);
-    return buildPromptAnalysis(prompt, response, details);
-  });
+  try {
+    const analyses: PromptAnalysis[] = body.prompts.map((prompt) => {
+      const response = responsesByPrompt[prompt.id] || "";
+      const details =
+        llmAnalysesByPrompt?.[prompt.id] ||
+        deterministicAnalyze(body.company, prompt, response);
+      return buildPromptAnalysis(prompt, response, details);
+    });
 
-  const fallbackAnalysisPrompts = body.prompts.filter((p) => !llmAnalysesByPrompt?.[p.id]);
-  console.warn(
-    `[analyze-prompts] Analysis: using Gemini for ${
-      body.prompts.length - fallbackAnalysisPrompts.length
-    }/${body.prompts.length} prompts, deterministic fallback for ${fallbackAnalysisPrompts.length}.`,
-  );
+    const fallbackAnalysisPrompts = body.prompts.filter((p) => !llmAnalysesByPrompt?.[p.id]);
+    console.warn(
+      `[analyze-prompts] Analysis: using Gemini for ${
+        body.prompts.length - fallbackAnalysisPrompts.length
+      }/${body.prompts.length} prompts, deterministic fallback for ${fallbackAnalysisPrompts.length}.`,
+    );
 
-  console.log(`[analyze-prompts] Completed with ${analyses.length} prompt results.`);
+    console.log(`[analyze-prompts] Completed with ${analyses.length} prompt results.`);
 
-  return res.status(200).json({
-    aggregateStats: aggregateAnalyses(body.company, analyses),
-    promptAnalyses: analyses,
-  });
+    return res.status(200).json({
+      aggregateStats: aggregateAnalyses(body.company, analyses),
+      promptAnalyses: analyses,
+    });
+  } catch (err) {
+    console.error("[analyze-prompts] Unexpected error during aggregation:", err);
+    return res.status(500).json({ error: "Analysis failed. Try demo mode." });
+  }
 }
