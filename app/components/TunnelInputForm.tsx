@@ -4,8 +4,14 @@ import { DEMO_COMPANY, getDemoAnalysisResponse } from "@/lib/demo-data";
 import { CompanyInput, GeneratedPrompt } from "@/types";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { PromptGenerationPreview } from "./PromptGenerationPreview";
+
+interface ClearbitSuggestion {
+  name: string;
+  domain: string;
+  logo: string;
+}
 
 function logoUrlFromDomain(domain: string): string {
   const clean = domain.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
@@ -46,8 +52,69 @@ export function TunnelInputForm() {
   const [prompts, setPrompts] = useState<GeneratedPrompt[]>([]);
   const [loadingStep, setLoadingStep] = useState<"idle" | "generating" | "analyzing">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<ClearbitSuggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const suppressFetchRef = useRef(false);
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
 
   const loading = loadingStep !== "idle";
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (suppressFetchRef.current) {
+      suppressFetchRef.current = false;
+      return;
+    }
+    const query = form.companyName.trim();
+    if (query.length < 2) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(query)}`,
+        );
+        if (res.ok) {
+          const data = (await res.json()) as ClearbitSuggestion[];
+          setSuggestions(data);
+          setShowSuggestions(data.length > 0);
+          setActiveSuggestionIndex(-1);
+        }
+      } catch {
+        // autocomplete is non-critical, fail silently
+      }
+    }, 300);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [form.companyName]);
+
+  const onSelectSuggestion = (suggestion: ClearbitSuggestion) => {
+    suppressFetchRef.current = true;
+    setForm((prev) => ({
+      ...prev,
+      companyName: suggestion.name,
+      website: suggestion.domain,
+      logoUrl: logoUrlFromDomain(suggestion.domain),
+    }));
+    setSuggestions([]);
+    setShowSuggestions(false);
+    setActiveSuggestionIndex(-1);
+  };
 
   const update = (key: keyof CompanyInput, value: string | number | string[]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -145,14 +212,59 @@ export function TunnelInputForm() {
             <label htmlFor="companyName" className={labelClass}>
               Company name
             </label>
-            <input
-              id="companyName"
-              className={inputClass}
-              placeholder="e.g. Wine Find"
-              value={form.companyName}
-              onChange={(e) => update("companyName", e.target.value)}
-              required
-            />
+            <div className="relative" ref={dropdownRef}>
+              <input
+                id="companyName"
+                className={inputClass}
+                placeholder="e.g. Wine Find"
+                value={form.companyName}
+                onChange={(e) => update("companyName", e.target.value)}
+                onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
+                onKeyDown={(e) => {
+                  if (!showSuggestions) return;
+                  if (e.key === "Escape") {
+                    setShowSuggestions(false);
+                  } else if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setActiveSuggestionIndex((i) => Math.min(i + 1, suggestions.length - 1));
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setActiveSuggestionIndex((i) => Math.max(i - 1, 0));
+                  } else if (e.key === "Enter" && activeSuggestionIndex >= 0) {
+                    e.preventDefault();
+                    onSelectSuggestion(suggestions[activeSuggestionIndex]);
+                  }
+                }}
+                autoComplete="off"
+                required
+              />
+              {showSuggestions && (
+                <ul className="absolute left-0 right-0 top-full z-10 mt-1 max-h-60 overflow-y-auto rounded-md border border-slate-200 bg-white shadow-lg">
+                  {suggestions.map((s, i) => (
+                    <li key={s.domain}>
+                      <button
+                        type="button"
+                        className={`flex w-full cursor-pointer items-center gap-3 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 ${i === activeSuggestionIndex ? "bg-slate-50" : ""}`}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          onSelectSuggestion(s);
+                        }}
+                      >
+                        <img
+                          src={logoUrlFromDomain(s.domain)}
+                          alt=""
+                          width={20}
+                          height={20}
+                          className="rounded-sm"
+                        />
+                        <span className="font-medium">{s.name}</span>
+                        <span className="ml-auto text-slate-400">{s.domain}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
 
           <div>
@@ -167,6 +279,8 @@ export function TunnelInputForm() {
                 value={form.website}
                 onChange={(e) => {
                   const val = e.target.value;
+                  setSuggestions([]);
+                  setShowSuggestions(false);
                   setForm((prev) => ({ ...prev, website: val, logoUrl: logoUrlFromDomain(val) }));
                 }}
                 required
