@@ -134,7 +134,7 @@ export function TunnelInputForm() {
       if (!response.ok) throw new Error("Could not generate prompts.");
 
       const data = (await response.json()) as GeneratedPrompt[];
-      setPrompts(data);
+      setPrompts((prev) => [...prev, ...data]);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Prompt generation failed. Try Demo Mode.";
@@ -351,7 +351,7 @@ export function TunnelInputForm() {
 
           <div>
             <label htmlFor="numberOfPrompts" className={labelClass}>
-              Number of prompts
+              Prompts to generate
             </label>
             <div className="flex items-center gap-3">
               <input
@@ -413,7 +413,7 @@ export function TunnelInputForm() {
         ) : null}
       </form>
 
-      <PromptGenerationPreview prompts={prompts} />
+      <PromptGenerationPreview prompts={prompts} onPromptsChange={setPrompts} />
     </div>
   );
 }
