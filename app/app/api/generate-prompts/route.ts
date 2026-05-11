@@ -1,7 +1,7 @@
 import { generateText } from "@/lib/gemini";
 import { safeParseJson } from "@/lib/json-repair";
 import { CompanyInput, GeneratedPrompt, PromptCategory } from "@/types";
-import type { NextApiRequest, NextApiResponse } from "next";
+import { NextResponse } from "next/server";
 
 const VALID_CATEGORIES: PromptCategory[] = [
   "discovery",
@@ -102,22 +102,26 @@ interface ParsedResponse {
   prompts?: ParsedPrompt[];
 }
 
-export default async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse<GeneratedPrompt[] | { error: string }>,
-) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+async function readJson<T>(request: Request): Promise<T | null> {
+  try {
+    return (await request.json()) as T;
+  } catch {
+    return null;
   }
+}
 
-  const input = req.body as CompanyInput;
+export async function POST(request: Request) {
+  const input = await readJson<CompanyInput>(request);
 
   if (!input?.companyName || !input?.category || !input?.description) {
-    return res.status(400).json({ error: "Missing required company fields." });
+    return NextResponse.json(
+      { error: "Missing required company fields." },
+      { status: 400 },
+    );
   }
 
   if (!process.env.GEMINI_API_KEY) {
-    return res.status(200).json(fallbackPrompts(input));
+    return NextResponse.json(fallbackPrompts(input));
   }
 
   try {
@@ -140,7 +144,7 @@ export default async function handler(
 
     const parsed = safeParseJson<ParsedResponse>(raw);
     if (!parsed?.prompts?.length) {
-      return res.status(200).json(fallbackPrompts(input));
+      return NextResponse.json(fallbackPrompts(input));
     }
 
     const prompts: GeneratedPrompt[] = parsed.prompts
@@ -158,8 +162,8 @@ export default async function handler(
       })
       .filter((p) => p.prompt.length > 0);
 
-    return res.status(200).json(prompts.length ? prompts : fallbackPrompts(input));
+    return NextResponse.json(prompts.length ? prompts : fallbackPrompts(input));
   } catch {
-    return res.status(200).json(fallbackPrompts(input));
+    return NextResponse.json(fallbackPrompts(input));
   }
 }
