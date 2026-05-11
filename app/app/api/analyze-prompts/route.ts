@@ -1,18 +1,24 @@
+import {
+  cacheHeaders,
+  createAnalysisCacheKey,
+  readCache,
+  writeCache,
+} from "@/lib/cache";
 import { aggregateAnalyses } from "@/lib/aggregation";
 import {
   buildPromptAnalysis,
   deterministicAnalyze,
 } from "@/lib/analysis";
-import { generateText } from "@/lib/gemini";
+import { GEMINI_MODEL, generateText } from "@/lib/gemini";
 import { safeParseJson } from "@/lib/json-repair";
 import {
   AnalysisResponse,
   CompanyInput,
   GeneratedPrompt,
-  PromptAnalysisDetails,
   PromptAnalysis,
+  PromptAnalysisDetails,
 } from "@/types";
-import type { NextApiRequest, NextApiResponse } from "next";
+import { NextResponse } from "next/server";
 
 interface AnalyzeBody {
   company: CompanyInput;
@@ -97,6 +103,10 @@ function fallbackResponse(company: CompanyInput, prompt: GeneratedPrompt): strin
   return `${competitors ? `${competitors} are frequently recommended for this category. ` : ""}${company.companyName} can be relevant for certain users depending on needs.`;
 }
 
+function providerFingerprint(): string {
+  return process.env.GEMINI_API_KEY ? `gemini:${GEMINI_MODEL}` : "local-fallback";
+}
+
 async function generateBatchedAnswers(
   company: CompanyInput,
   prompts: GeneratedPrompt[],
@@ -137,6 +147,7 @@ async function analyzeBatchedResponses(
   prompts: GeneratedPrompt[],
   responses: Record<string, string>,
 ): Promise<Record<string, PromptAnalysisDetails> | null> {
+  const promptById = new Map(prompts.map((prompt) => [prompt.id, prompt]));
   const payload = JSON.stringify({
     target: company.companyName,
     competitors: company.competitors || [],
@@ -152,8 +163,6 @@ async function analyzeBatchedResponses(
     systemInstruction: ANALYSIS_SYSTEM_INSTRUCTION,
     prompt: payload,
     expectJson: true,
-    // Batched analysis JSON can get large; if we hit an output cap we may end up with
-    // truncated/invalid JSON and be forced into deterministic fallback.
     maxOutputTokens: 6500,
     temperature: 0.2,
   });
@@ -172,7 +181,7 @@ async function analyzeBatchedResponses(
   }
 
   return parsed.analyses.reduce<Record<string, PromptAnalysisDetails>>((acc, item) => {
-    const matchingPrompt = prompts.find((p) => p.id === item.promptId);
+    const matchingPrompt = promptById.get(item.promptId);
     if (!matchingPrompt) return acc;
     const deterministic = deterministicAnalyze(
       company,
@@ -222,21 +231,42 @@ async function analyzeBatchedResponses(
   }, {});
 }
 
-export default async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse<AnalysisResponse | { error: string }>,
-) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+async function readJson<T>(request: Request): Promise<T | null> {
+  try {
+    return (await request.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+function jsonResponse(response: AnalysisResponse, metadata: NonNullable<AnalysisResponse["cache"]>) {
+  return NextResponse.json(
+    { ...response, cache: metadata },
+    { headers: cacheHeaders(metadata) },
+  );
+}
+
+export async function POST(request: Request) {
+  const body = await readJson<AnalyzeBody>(request);
+  if (!body?.company || !body?.prompts?.length) {
+    return NextResponse.json(
+      { error: "Missing company or prompts." },
+      { status: 400 },
+    );
   }
 
-  const body = req.body as AnalyzeBody;
-  if (!body?.company || !body?.prompts?.length) {
-    return res.status(400).json({ error: "Missing company or prompts." });
+  const cacheKey = createAnalysisCacheKey(body.company, body.prompts, providerFingerprint());
+  const cached = readCache<AnalysisResponse>("analysis", cacheKey);
+
+  if (cached) {
+    console.info(
+      `[analyze-prompts] cache hit key=${cached.metadata.key} version=${cached.metadata.version}`,
+    );
+    return jsonResponse(cached.value, cached.metadata);
   }
 
   console.log(
-    `[analyze-prompts] Starting analysis: company="${body.company.companyName}", prompts=${body.prompts.length}`,
+    `[analyze-prompts] Starting analysis: company="${body.company.companyName}", prompts=${body.prompts.length}, cacheKey=${cacheKey}`,
   );
 
   const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
@@ -284,30 +314,30 @@ export default async function handler(
     }
   }
 
-  try {
-    const analyses: PromptAnalysis[] = body.prompts.map((prompt) => {
-      const response = responsesByPrompt[prompt.id] || "";
-      const details =
-        llmAnalysesByPrompt?.[prompt.id] ||
-        deterministicAnalyze(body.company, prompt, response);
-      return buildPromptAnalysis(prompt, response, details);
-    });
+  const analyses: PromptAnalysis[] = body.prompts.map((prompt) => {
+    const response = responsesByPrompt[prompt.id] || "";
+    const details =
+      llmAnalysesByPrompt?.[prompt.id] ||
+      deterministicAnalyze(body.company, prompt, response);
+    return buildPromptAnalysis(prompt, response, details);
+  });
 
-    const fallbackAnalysisPrompts = body.prompts.filter((p) => !llmAnalysesByPrompt?.[p.id]);
-    console.warn(
-      `[analyze-prompts] Analysis: using Gemini for ${
-        body.prompts.length - fallbackAnalysisPrompts.length
-      }/${body.prompts.length} prompts, deterministic fallback for ${fallbackAnalysisPrompts.length}.`,
-    );
+  const fallbackAnalysisPrompts = body.prompts.filter((p) => !llmAnalysesByPrompt?.[p.id]);
+  console.warn(
+    `[analyze-prompts] Analysis: using Gemini for ${
+      body.prompts.length - fallbackAnalysisPrompts.length
+    }/${body.prompts.length} prompts, deterministic fallback for ${fallbackAnalysisPrompts.length}.`,
+  );
 
-    console.log(`[analyze-prompts] Completed with ${analyses.length} prompt results.`);
+  const response: AnalysisResponse = {
+    aggregateStats: aggregateAnalyses(body.company, analyses),
+    promptAnalyses: analyses,
+  };
+  const metadata = writeCache("analysis", cacheKey, response);
 
-    return res.status(200).json({
-      aggregateStats: aggregateAnalyses(body.company, analyses),
-      promptAnalyses: analyses,
-    });
-  } catch (err) {
-    console.error("[analyze-prompts] Unexpected error during aggregation:", err);
-    return res.status(500).json({ error: "Analysis failed. Try demo mode." });
-  }
+  console.log(
+    `[analyze-prompts] Completed with ${analyses.length} prompt results. cache miss stored key=${metadata.key} version=${metadata.version}`,
+  );
+
+  return jsonResponse(response, metadata);
 }
