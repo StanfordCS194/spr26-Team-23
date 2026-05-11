@@ -95,7 +95,16 @@ export interface AggregateStats {
   recommendations: string[];
 }
 
+export type AIModel = "gpt-4o" | "claude" | "gemini";
+
+export interface ModelAnalysis {
+  model: AIModel;
+  promptAnalyses: PromptAnalysis[];
+  aggregateStats: AggregateStats;
+}
+
 export interface AnalysisResponse {
+  models?: ModelAnalysis[];
   aggregateStats: AggregateStats;
   promptAnalyses: PromptAnalysis[];
 }
