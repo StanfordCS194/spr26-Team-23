@@ -1,4 +1,4 @@
-![Logo](public/tunnel-logo.svg)
+![Logo](app/public/tunnel-logo.svg)
  
 # Tunnel
  
