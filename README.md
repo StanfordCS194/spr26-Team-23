@@ -1,4 +1,4 @@
-<img src="public/tunnel-logo.svg" alt="Tunnel logo" width="96" height="96" />
+<img src="app/public/tunnel-logo.svg" alt="Tunnel logo" width="96" height="96" />
  
 # Tunnel
  
