@@ -1,25 +1,25 @@
-<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">Tunnel logo</title>
   <desc id="desc">Rounded dark square logo with a centered circular lens.</desc>
   <defs>
-    <linearGradient id="icon" x1="10" y1="8" x2="118" y2="118" gradientUnits="userSpaceOnUse">
+    <linearGradient id="icon" x1="40" y1="32" x2="472" y2="472" gradientUnits="userSpaceOnUse">
       <stop stop-color="#242A3B"/>
       <stop offset="1" stop-color="#111624"/>
     </linearGradient>
-    <linearGradient id="lens" x1="39" y1="36" x2="89" y2="86" gradientUnits="userSpaceOnUse">
+    <linearGradient id="lens" x1="156" y1="144" x2="356" y2="344" gradientUnits="userSpaceOnUse">
       <stop stop-color="#2B3041"/>
       <stop offset="1" stop-color="#0D111D"/>
     </linearGradient>
-    <filter id="shadow" x="3" y="2" width="122" height="122" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
-      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#0B1020" flood-opacity=".22"/>
+    <filter id="shadow" x="12" y="8" width="488" height="488" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#0B1020" flood-opacity=".22"/>
     </filter>
   </defs>
 
   <g filter="url(#shadow)">
-    <rect x="10" y="8" width="108" height="108" rx="27" fill="url(#icon)"/>
-    <circle cx="64" cy="62" r="29" fill="url(#lens)" stroke="#444A5E" stroke-width="3.6"/>
-    <circle cx="64" cy="62" r="16" fill="#151A28" stroke="#878B98" stroke-width="2.7"/>
-    <circle cx="64" cy="62" r="8.2" fill="#F4E4B7"/>
-    <circle cx="61.3" cy="59" r="2.5" fill="#FFF8DC"/>
+    <rect x="40" y="32" width="432" height="432" rx="108" fill="url(#icon)"/>
+    <circle cx="256" cy="248" r="116" fill="url(#lens)" stroke="#444A5E" stroke-width="14.4"/>
+    <circle cx="256" cy="248" r="64" fill="#151A28" stroke="#878B98" stroke-width="10.8"/>
+    <circle cx="256" cy="248" r="32.8" fill="#F4E4B7"/>
+    <circle cx="245.2" cy="236" r="10" fill="#FFF8DC"/>
   </g>
 </svg>

@@ -1,3 +1,5 @@
+<img src="public/tunnel-logo.svg" alt="Tunnel logo" width="96" height="96" />
+
 # Tunnel
 
 Tunnel is a comprehensive prototype that helps companies understand how AI assistants see and recommend them.
