@@ -4,6 +4,7 @@ import { TunnelDashboard } from "@/components/TunnelDashboard";
 import { DEMO_COMPANY, getDemoAnalysisResponse } from "@/lib/demo-data";
 import { AnalysisResponse, CompanyInput } from "@/types";
 import Link from "next/link";
+import posthog from "posthog-js";
 import { useEffect, useState } from "react";
 
 interface StoredTunnelData {
@@ -28,9 +29,14 @@ export default function DashboardPage() {
   const [payload, setPayload] = useState<StoredTunnelData | null>(null);
 
   useEffect(() => {
+    const stored = readStoredPayload();
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPayload(readStoredPayload());
+    setPayload(stored);
     setHydrated(true);
+    posthog.capture("dashboard_viewed", {
+      source: stored ? "stored" : "demo",
+      company_name: stored?.company?.companyName ?? "Wine Find",
+    });
   }, []);
 
   if (!hydrated) {
