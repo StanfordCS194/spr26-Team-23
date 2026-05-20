@@ -82,8 +82,6 @@ export function TunnelInputForm() {
     }
     const query = form.companyName.trim();
     if (query.length < 2) {
-      setSuggestions([]);
-      setShowSuggestions(false);
       return;
     }
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -222,7 +220,14 @@ export function TunnelInputForm() {
                 className={inputClass}
                 placeholder="e.g. Wine Find"
                 value={form.companyName}
-                onChange={(e) => update("companyName", e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  update("companyName", value);
+                  if (value.trim().length < 2) {
+                    setSuggestions([]);
+                    setShowSuggestions(false);
+                  }
+                }}
                 onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
                 onKeyDown={(e) => {
                   if (!showSuggestions) return;
