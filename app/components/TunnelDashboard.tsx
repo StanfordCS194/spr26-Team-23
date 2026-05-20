@@ -1,3 +1,4 @@
+import { UserButton } from "@clerk/nextjs";
 import { AnalysisResponse, CompanyInput } from "@/types";
 import Image from "next/image";
 import Link from "next/link";
@@ -39,6 +40,9 @@ export function TunnelDashboard({ company, data }: TunnelDashboardProps) {
                 &lt;- New Analysis
               </Link>
               <ExportButton />
+              <div className="ml-auto">
+                <UserButton />
+              </div>
             </div>
             <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
               <div>
