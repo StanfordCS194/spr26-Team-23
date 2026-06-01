@@ -1,4 +1,7 @@
-import { fetchPublicPageHtmlForModel } from "@/lib/fetch-public-page-text";
+import {
+  extractPageMetaFromHtml,
+  fetchPublicPageHtmlForModel,
+} from "@/lib/fetch-public-page-text";
 import { GEMINI_MODEL, generateText } from "@/lib/gemini";
 import {
   buildLlmsTxtMarkdown,
@@ -131,8 +134,16 @@ export async function POST(req: Request) {
   }
 
   const reportJson = serializeTunnelReportForPrompt(company, analysis);
+  const pageMeta = homepageHtml ? extractPageMetaFromHtml(homepageHtml) : {};
+  const pageMetaLines: string[] = [];
+  if (pageMeta.title) pageMetaLines.push(`- **Title:** ${pageMeta.title}`);
+  if (pageMeta.description) pageMetaLines.push(`- **Meta description:** ${pageMeta.description}`);
+  const pageMetaSection =
+    pageMetaLines.length > 0
+      ? `## Homepage metadata (parsed from HTML)\n${pageMetaLines.join("\n")}\n\n`
+      : "";
 
-  const userPrompt = `## Homepage HTML (fetched from ${pageUrl || "n/a"})
+  const userPrompt = `${pageMetaSection}## Homepage HTML (fetched from ${pageUrl || "n/a"})
 Below is HTML from the live request (script and style tags were removed; content may be truncated for size). Parse structure and visible text.
 
 ${homepageHtml}
@@ -157,6 +168,7 @@ Produce the llms.txt-style markdown document now.`;
       markdown,
       model: GEMINI_MODEL,
       websiteFetch,
+      pageMeta: Object.keys(pageMeta).length > 0 ? pageMeta : undefined,
       usedFallback: false,
     });
   } catch (e) {

@@ -22,6 +22,7 @@ interface GenerateLlmsTxtResponse {
   markdown?: string;
   model?: string;
   websiteFetch?: WebsiteFetchMeta;
+  pageMeta?: { title?: string; description?: string };
   usedFallback?: boolean;
   fallbackReason?: "missing_api_key" | "generation_failed";
   fallbackMessage?: string;
@@ -32,6 +33,7 @@ interface CacheEntry {
   markdown: string;
   model: string;
   websiteFetch: WebsiteFetchMeta | null;
+  pageMeta: { title?: string; description?: string } | null;
   fallbackNote: string | null;
 }
 
@@ -69,6 +71,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
   const [markdown, setMarkdown] = useState("");
   const [modelLabel, setModelLabel] = useState<string | null>(null);
   const [websiteMeta, setWebsiteMeta] = useState<WebsiteFetchMeta | null>(null);
+  const [pageMeta, setPageMeta] = useState<{ title?: string; description?: string } | null>(null);
   const [fallbackNote, setFallbackNote] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loadToken, setLoadToken] = useState(0);
@@ -87,6 +90,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
       setMarkdown(md);
       setModelLabel("Offline template (no LLM)");
       setWebsiteMeta(null);
+      setPageMeta(null);
       setFallbackNote(note);
       setStatus("ready");
       setErrorMessage(null);
@@ -103,6 +107,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
       setMarkdown(cached.markdown);
       setModelLabel(cached.model);
       setWebsiteMeta(cached.websiteFetch);
+      setPageMeta(cached.pageMeta);
       setFallbackNote(cached.fallbackNote);
       setStatus("ready");
       setErrorMessage(null);
@@ -114,6 +119,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
     setErrorMessage(null);
     setModelLabel(null);
     setWebsiteMeta(null);
+    setPageMeta(null);
     setFallbackNote(null);
     setMarkdown("");
 
@@ -146,12 +152,14 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
             markdown: body.markdown,
             model: body.model || "unknown",
             websiteFetch: body.websiteFetch ?? null,
+            pageMeta: body.pageMeta ?? null,
             fallbackNote: note,
           };
           cacheRef.current.set(cacheKey, entry);
           setMarkdown(entry.markdown);
           setModelLabel(entry.model);
           setWebsiteMeta(entry.websiteFetch);
+          setPageMeta(entry.pageMeta);
           setFallbackNote(entry.fallbackNote);
           setStatus("ready");
           return;
@@ -208,6 +216,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
     setMarkdown(md);
     setModelLabel("Offline template (no LLM)");
     setWebsiteMeta(null);
+    setPageMeta(null);
     setFallbackNote("Using the offline template (chosen manually).");
     setStatus("ready");
     setErrorMessage(null);
@@ -321,6 +330,15 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
                         {websiteMeta.ok
                           ? `loaded (${websiteMeta.htmlChars.toLocaleString()} chars${websiteMeta.htmlTruncated ? ", truncated" : ""} from ${websiteMeta.finalUrl || company.website})`
                           : `partial or failed${websiteMeta.error ? ` — ${websiteMeta.error}` : ""}`}
+                      </>
+                    ) : null}
+                    {pageMeta?.title ? (
+                      <>
+                        {" "}
+                        · <span className="font-medium text-slate-700">Page title:</span>{" "}
+                        {pageMeta.title.length > 60
+                          ? `${pageMeta.title.slice(0, 57)}…`
+                          : pageMeta.title}
                       </>
                     ) : null}
                   </>
