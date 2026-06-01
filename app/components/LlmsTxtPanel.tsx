@@ -18,10 +18,20 @@ interface WebsiteFetchMeta {
   htmlTruncated: boolean;
 }
 
+interface ExistingLlmsTxtMeta {
+  found: boolean;
+  ok: boolean;
+  url: string;
+  status?: number;
+  contentTruncated?: boolean;
+  error?: string;
+}
+
 interface GenerateLlmsTxtResponse {
   markdown?: string;
   model?: string;
   websiteFetch?: WebsiteFetchMeta;
+  existingLlmsTxt?: ExistingLlmsTxtMeta;
   usedFallback?: boolean;
   fallbackReason?: "missing_api_key" | "generation_failed";
   fallbackMessage?: string;
@@ -32,6 +42,7 @@ interface CacheEntry {
   markdown: string;
   model: string;
   websiteFetch: WebsiteFetchMeta | null;
+  existingLlmsTxt: ExistingLlmsTxtMeta | null;
   fallbackNote: string | null;
 }
 
@@ -69,6 +80,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
   const [markdown, setMarkdown] = useState("");
   const [modelLabel, setModelLabel] = useState<string | null>(null);
   const [websiteMeta, setWebsiteMeta] = useState<WebsiteFetchMeta | null>(null);
+  const [existingLlmsMeta, setExistingLlmsMeta] = useState<ExistingLlmsTxtMeta | null>(null);
   const [fallbackNote, setFallbackNote] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loadToken, setLoadToken] = useState(0);
@@ -87,6 +99,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
       setMarkdown(md);
       setModelLabel("Offline template (no LLM)");
       setWebsiteMeta(null);
+      setExistingLlmsMeta(null);
       setFallbackNote(note);
       setStatus("ready");
       setErrorMessage(null);
@@ -103,6 +116,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
       setMarkdown(cached.markdown);
       setModelLabel(cached.model);
       setWebsiteMeta(cached.websiteFetch);
+      setExistingLlmsMeta(cached.existingLlmsTxt);
       setFallbackNote(cached.fallbackNote);
       setStatus("ready");
       setErrorMessage(null);
@@ -114,6 +128,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
     setErrorMessage(null);
     setModelLabel(null);
     setWebsiteMeta(null);
+    setExistingLlmsMeta(null);
     setFallbackNote(null);
     setMarkdown("");
 
@@ -146,12 +161,14 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
             markdown: body.markdown,
             model: body.model || "unknown",
             websiteFetch: body.websiteFetch ?? null,
+            existingLlmsTxt: body.existingLlmsTxt ?? null,
             fallbackNote: note,
           };
           cacheRef.current.set(cacheKey, entry);
           setMarkdown(entry.markdown);
           setModelLabel(entry.model);
           setWebsiteMeta(entry.websiteFetch);
+          setExistingLlmsMeta(entry.existingLlmsTxt);
           setFallbackNote(entry.fallbackNote);
           setStatus("ready");
           return;
@@ -208,6 +225,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
     setMarkdown(md);
     setModelLabel("Offline template (no LLM)");
     setWebsiteMeta(null);
+    setExistingLlmsMeta(null);
     setFallbackNote("Using the offline template (chosen manually).");
     setStatus("ready");
     setErrorMessage(null);
@@ -241,10 +259,11 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
                   llms.txt-style draft
                 </h2>
                 <p className="mt-1 text-sm leading-6 text-slate-600">
-                  We fetch your homepage HTML (scripts/styles stripped) and send it with your Tunnel
-                  report to <strong className="font-medium text-slate-800">Gemini 3 Flash (preview)</strong>{" "}
-                  when an API key is configured. If Gemini is unavailable or the request fails, you
-                  still get a report-based offline template automatically. Markdown fits the{" "}
+                  We fetch your homepage HTML and any public <code className="text-xs">/llms.txt</code>{" "}
+                  (scripts/styles stripped on HTML) and send them with your Tunnel report to{" "}
+                  <strong className="font-medium text-slate-800">Gemini 3 Flash (preview)</strong> when
+                  an API key is configured. If Gemini is unavailable or the request fails, you still
+                  get a report-based offline template automatically. Markdown fits the{" "}
                   <a
                     href="https://llmstxt.org/"
                     className="font-medium text-sky-700 underline underline-offset-2 hover:text-sky-800"
@@ -321,6 +340,17 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
                         {websiteMeta.ok
                           ? `loaded (${websiteMeta.htmlChars.toLocaleString()} chars${websiteMeta.htmlTruncated ? ", truncated" : ""} from ${websiteMeta.finalUrl || company.website})`
                           : `partial or failed${websiteMeta.error ? ` — ${websiteMeta.error}` : ""}`}
+                      </>
+                    ) : null}
+                    {existingLlmsMeta?.url ? (
+                      <>
+                        {" "}
+                        · <span className="font-medium text-slate-700">Existing llms.txt:</span>{" "}
+                        {existingLlmsMeta.found
+                          ? `merged (${existingLlmsMeta.url}${existingLlmsMeta.contentTruncated ? ", truncated" : ""})`
+                          : existingLlmsMeta.ok
+                            ? `none at ${existingLlmsMeta.url}`
+                            : `lookup failed${existingLlmsMeta.error ? ` — ${existingLlmsMeta.error}` : ""}`}
                       </>
                     ) : null}
                   </>
