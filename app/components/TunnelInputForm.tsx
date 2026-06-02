@@ -1,7 +1,7 @@
 "use client";
 
 import { DEMO_COMPANY, getDemoAnalysisResponse } from "@/lib/demo-data";
-import { CompanyInput, GeneratedPrompt } from "@/types";
+import { AnalysisResponse, CompanyInput, GeneratedPrompt } from "@/types";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
@@ -78,8 +78,6 @@ export function TunnelInputForm() {
     }
     const query = form.companyName.trim();
     if (query.length < 2) {
-      setSuggestions([]);
-      setShowSuggestions(false);
       return;
     }
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -144,6 +142,22 @@ export function TunnelInputForm() {
     }
   };
 
+  const saveReport = async (analysis: AnalysisResponse) => {
+    try {
+      const response = await fetch("/api/reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ company: form, prompts, analysis }),
+      });
+
+      if (!response.ok && response.status !== 401) {
+        console.warn("[reports] Could not save report:", await response.text());
+      }
+    } catch (error) {
+      console.warn("[reports] Could not save report:", error);
+    }
+  };
+
   const onRunAnalysis = async () => {
     setLoadingStep("analyzing");
     setError(null);
@@ -165,11 +179,12 @@ export function TunnelInputForm() {
         throw new Error(apiError);
       }
 
-      const analysis = await response.json();
+      const analysis = (await response.json()) as AnalysisResponse;
       window.localStorage.setItem(
         "tunnel-latest-report",
         JSON.stringify({ company: form, analysis }),
       );
+      await saveReport(analysis);
       router.push("/dashboard");
     } catch (error) {
       const message =
@@ -218,7 +233,14 @@ export function TunnelInputForm() {
                 className={inputClass}
                 placeholder="e.g. Wine Find"
                 value={form.companyName}
-                onChange={(e) => update("companyName", e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value.trim().length < 2) {
+                    setSuggestions([]);
+                    setShowSuggestions(false);
+                  }
+                  update("companyName", value);
+                }}
                 onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
                 onKeyDown={(e) => {
                   if (!showSuggestions) return;

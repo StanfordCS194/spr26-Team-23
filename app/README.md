@@ -14,17 +14,25 @@ It simulates realistic prompts, runs AI responses, analyzes visibility vs compet
    ```bash
    pnpm install
    ```
-2. Add your Gemini API key in `app/.env.local`:
+2. Add environment variables in `app/.env.local`:
    ```bash
+   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
+   CLERK_SECRET_KEY=your_clerk_secret_key
+   DATABASE_URL="postgres://prisma.[PROJECT-REF]:[PRISMA-PASSWORD]@[DB-REGION].pooler.supabase.com:5432/postgres"
    GEMINI_API_KEY=your_key_here
    ```
    The app uses Google Gemini (`gemini-3-flash-preview`) for prompt generation and AI responses.
    You can override the model by setting `GEMINI_MODEL` in `app/.env.local`.
-3. Run the app:
+3. Apply the Prisma migration to Supabase:
+   ```bash
+   pnpm prisma:deploy
+   ```
+   `DATABASE_URL` should point at your Supabase Postgres connection string. For serverless deployments, use Supabase's transaction pooler string on port `6543`.
+4. Run the app:
    ```bash
    pnpm dev
    ```
-4. Open [http://localhost:3000](http://localhost:3000)
+5. Open [http://localhost:3000](http://localhost:3000)
 
 ## Demo Mode
 

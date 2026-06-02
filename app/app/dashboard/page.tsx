@@ -1,5 +1,6 @@
 "use client";
 
+import { useUser } from "@clerk/nextjs";
 import { TunnelDashboard } from "@/components/TunnelDashboard";
 import { DEMO_COMPANY, getDemoAnalysisResponse } from "@/lib/demo-data";
 import { AnalysisResponse, CompanyInput } from "@/types";
@@ -24,14 +25,47 @@ function readStoredPayload(): StoredTunnelData | null {
 }
 
 export default function DashboardPage() {
+  const { isLoaded, isSignedIn } = useUser();
   const [hydrated, setHydrated] = useState(false);
   const [payload, setPayload] = useState<StoredTunnelData | null>(null);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPayload(readStoredPayload());
-    setHydrated(true);
-  }, []);
+    if (!isLoaded) return;
+
+    let active = true;
+
+    async function loadReport() {
+      let nextPayload = readStoredPayload();
+
+      if (isSignedIn) {
+        try {
+          const response = await fetch("/api/reports/latest");
+          if (response.ok) {
+            const data = (await response.json()) as { report?: StoredTunnelData | null };
+            if (data.report) {
+              nextPayload = {
+                company: data.report.company,
+                analysis: data.report.analysis,
+              };
+            }
+          }
+        } catch {
+          // Fall back to the local copy when the database is unavailable.
+        }
+      }
+
+      if (active) {
+        setPayload(nextPayload);
+        setHydrated(true);
+      }
+    }
+
+    void loadReport();
+
+    return () => {
+      active = false;
+    };
+  }, [isLoaded, isSignedIn]);
 
   if (!hydrated) {
     return <main className="min-h-screen" />;
