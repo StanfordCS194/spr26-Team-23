@@ -1,6 +1,6 @@
 "use client";
 
-import { PromptAnalysis, Sentiment } from "@/types";
+import { PromptAnalysis, PromptCategory, Sentiment } from "@/types";
 import { useState } from "react";
 import { RawResponseViewer } from "./RawResponseViewer";
 
@@ -23,8 +23,18 @@ const CATEGORY_LABEL: Record<string, string> = {
   purchase: "Purchase",
 };
 
+const ALL_CATEGORIES: PromptCategory[] = ["discovery", "comparison", "use_case", "niche", "purchase"];
+
+const selectClass =
+  "rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100";
+
 export function PromptResultTable({ analyses }: PromptResultTableProps) {
   const [openPromptId, setOpenPromptId] = useState<string | null>(null);
+  const [filterCategory, setFilterCategory] = useState<PromptCategory | "all">("all");
+
+  const filtered = analyses.filter(
+    (a) => filterCategory === "all" || a.category === filterCategory,
+  );
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm md:p-6">
@@ -42,6 +52,19 @@ export function PromptResultTable({ analyses }: PromptResultTableProps) {
         </span>
       </div>
 
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <select
+          value={filterCategory}
+          onChange={(e) => setFilterCategory(e.target.value as PromptCategory | "all")}
+          className={selectClass}
+        >
+          <option value="all">All categories</option>
+          {ALL_CATEGORIES.map((c) => (
+            <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
+          ))}
+        </select>
+      </div>
+
       <div className="mt-5 hidden grid-cols-12 gap-3 border-b border-slate-200 px-3 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 md:grid">
         <span className="col-span-4">Prompt</span>
         <span className="col-span-2">Category</span>
@@ -52,7 +75,7 @@ export function PromptResultTable({ analyses }: PromptResultTableProps) {
       </div>
 
       <div className="divide-y divide-slate-200">
-        {analyses.map((item) => {
+        {filtered.map((item) => {
           const isOpen = openPromptId === item.promptId;
           return (
             <div
