@@ -33,10 +33,19 @@ export function PromptResultTable({ analyses }: PromptResultTableProps) {
   const [openPromptId, setOpenPromptId] = useState<string | null>(null);
   const [filterCategory, setFilterCategory] = useState<PromptCategory | "all">("all");
   const [filterSentiment, setFilterSentiment] = useState<Sentiment | "all">("all");
+  const [sortByRank, setSortByRank] = useState(false);
 
   const filtered = analyses
     .filter((a) => filterCategory === "all" || a.category === filterCategory)
     .filter((a) => filterSentiment === "all" || a.analysis.sentiment === filterSentiment);
+
+  const sorted = sortByRank
+    ? [...filtered].sort((a, b) => {
+        const ra = a.analysis.targetRank ?? Infinity;
+        const rb = b.analysis.targetRank ?? Infinity;
+        return ra - rb;
+      })
+    : filtered;
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm md:p-6">
@@ -76,6 +85,18 @@ export function PromptResultTable({ analyses }: PromptResultTableProps) {
             <option key={s} value={s}>{s.replace("_", " ")}</option>
           ))}
         </select>
+
+        <button
+          type="button"
+          onClick={() => setSortByRank((v) => !v)}
+          className={`rounded-md border px-3 py-1.5 text-sm font-medium shadow-sm transition ${
+            sortByRank
+              ? "border-sky-300 bg-sky-50 text-sky-700"
+              : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          Sort by rank
+        </button>
       </div>
 
       <div className="mt-5 hidden grid-cols-12 gap-3 border-b border-slate-200 px-3 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 md:grid">
@@ -88,7 +109,12 @@ export function PromptResultTable({ analyses }: PromptResultTableProps) {
       </div>
 
       <div className="divide-y divide-slate-200">
-        {filtered.map((item) => {
+        {sorted.length === 0 && (
+          <p className="py-8 text-center text-sm text-slate-400">
+            No prompts match the selected filters.
+          </p>
+        )}
+        {sorted.map((item) => {
           const isOpen = openPromptId === item.promptId;
           return (
             <div
