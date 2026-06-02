@@ -1,3 +1,4 @@
+import { AuthStatusButtons } from "@/components/AuthStatusButtons";
 import { TunnelInputForm } from "@/components/TunnelInputForm";
 
 export default function Home() {
@@ -14,9 +15,9 @@ export default function Home() {
               </p>
             </div>
           </div>
-          <span className="hidden rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-700 sm:inline-flex">
-            Competitive search report
-          </span>
+          <div className="flex items-center gap-2">
+            <AuthStatusButtons />
+          </div>
         </header>
 
         <section className="grid flex-1 gap-6 py-6 lg:grid-cols-[minmax(0,0.75fr)_minmax(520px,1fr)] lg:items-start lg:gap-8 lg:py-12">
