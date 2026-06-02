@@ -36,9 +36,12 @@ export function PromptResultTable({ analyses }: PromptResultTableProps) {
   const [sortByRank, setSortByRank] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
+  const query = searchQuery.trim().toLowerCase();
+
   const filtered = analyses
     .filter((a) => filterCategory === "all" || a.category === filterCategory)
-    .filter((a) => filterSentiment === "all" || a.analysis.sentiment === filterSentiment);
+    .filter((a) => filterSentiment === "all" || a.analysis.sentiment === filterSentiment)
+    .filter((a) => !query || a.prompt.toLowerCase().includes(query));
 
   const sorted = sortByRank
     ? [...filtered].sort((a, b) => {
