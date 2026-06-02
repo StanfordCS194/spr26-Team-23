@@ -47,6 +47,14 @@ export function PromptResultTable({ analyses }: PromptResultTableProps) {
       })
     : filtered;
 
+  const hasFilters = filterCategory !== "all" || filterSentiment !== "all" || sortByRank;
+
+  const clearFilters = () => {
+    setFilterCategory("all");
+    setFilterSentiment("all");
+    setSortByRank(false);
+  };
+
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm md:p-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -59,7 +67,9 @@ export function PromptResultTable({ analyses }: PromptResultTableProps) {
           </p>
         </div>
         <span className="w-fit rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-sm font-medium text-slate-600">
-          {analyses.length} prompts
+          {sorted.length === analyses.length
+            ? `${analyses.length} prompts`
+            : `${sorted.length} of ${analyses.length} prompts`}
         </span>
       </div>
 
@@ -97,6 +107,16 @@ export function PromptResultTable({ analyses }: PromptResultTableProps) {
         >
           Sort by rank
         </button>
+
+        {hasFilters && (
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="text-sm font-medium text-slate-500 underline-offset-4 hover:text-slate-800 hover:underline"
+          >
+            Clear
+          </button>
+        )}
       </div>
 
       <div className="mt-5 hidden grid-cols-12 gap-3 border-b border-slate-200 px-3 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 md:grid">
