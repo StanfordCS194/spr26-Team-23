@@ -1,6 +1,17 @@
-import { generateText } from "@/lib/gemini";
+import {
+  cacheHeaders,
+  createPromptGenerationCacheKey,
+  readCache,
+  writeCache,
+} from "@/lib/cache";
+import { GEMINI_MODEL, generateText } from "@/lib/gemini";
 import { safeParseJson } from "@/lib/json-repair";
-import { CompanyInput, GeneratedPrompt, PromptCategory } from "@/types";
+import {
+  CompanyInput,
+  GeneratedPrompt,
+  PromptCategory,
+  PromptGenerationResponse,
+} from "@/types";
 import { NextResponse } from "next/server";
 
 const VALID_CATEGORIES: PromptCategory[] = [
@@ -50,6 +61,17 @@ Rules:
 - Do not include markdown.
 - Return valid parseable JSON only.`;
 
+interface ParsedPrompt {
+  id?: string;
+  category: PromptCategory;
+  prompt: string;
+  rationale: string;
+}
+
+interface ParsedResponse {
+  prompts?: ParsedPrompt[];
+}
+
 function fallbackPrompts(input: CompanyInput): GeneratedPrompt[] {
   const competitors = input.competitors?.join(", ") || "relevant alternatives";
   const templates: Omit<GeneratedPrompt, "id">[] = [
@@ -91,15 +113,8 @@ function fallbackPrompts(input: CompanyInput): GeneratedPrompt[] {
   });
 }
 
-interface ParsedPrompt {
-  id?: string;
-  category: PromptCategory;
-  prompt: string;
-  rationale: string;
-}
-
-interface ParsedResponse {
-  prompts?: ParsedPrompt[];
+function providerFingerprint(): string {
+  return process.env.GEMINI_API_KEY ? `gemini:${GEMINI_MODEL}` : "local-fallback";
 }
 
 async function readJson<T>(request: Request): Promise<T | null> {
@@ -108,6 +123,11 @@ async function readJson<T>(request: Request): Promise<T | null> {
   } catch {
     return null;
   }
+}
+
+function jsonResponse(prompts: GeneratedPrompt[], metadata: PromptGenerationResponse["cache"]) {
+  const body: PromptGenerationResponse = { prompts, cache: metadata };
+  return NextResponse.json(body, { headers: cacheHeaders(metadata) });
 }
 
 export async function POST(request: Request) {
@@ -120,50 +140,69 @@ export async function POST(request: Request) {
     );
   }
 
+  const cacheKey = createPromptGenerationCacheKey(input, providerFingerprint());
+  const cached = readCache<GeneratedPrompt[]>("promptGeneration", cacheKey);
+
+  if (cached) {
+    console.info(
+      `[generate-prompts] cache hit key=${cached.metadata.key} version=${cached.metadata.version}`,
+    );
+    return jsonResponse(cached.value, cached.metadata);
+  }
+
+  let prompts: GeneratedPrompt[];
+
   if (!process.env.GEMINI_API_KEY) {
-    return NextResponse.json(fallbackPrompts(input));
-  }
+    prompts = fallbackPrompts(input);
+  } else {
+    try {
+      const userPayload = JSON.stringify({
+        companyName: input.companyName,
+        website: input.website,
+        description: input.description,
+        category: input.category,
+        competitors: input.competitors || [],
+        numberOfPrompts: input.numberOfPrompts,
+      });
 
-  try {
-    const userPayload = JSON.stringify({
-      companyName: input.companyName,
-      website: input.website,
-      description: input.description,
-      category: input.category,
-      competitors: input.competitors || [],
-      numberOfPrompts: input.numberOfPrompts,
-    });
+      const raw = await generateText({
+        systemInstruction: SYSTEM_INSTRUCTION,
+        prompt: userPayload,
+        expectJson: true,
+        maxOutputTokens: 1600,
+        temperature: 0.7,
+      });
 
-    const raw = await generateText({
-      systemInstruction: SYSTEM_INSTRUCTION,
-      prompt: userPayload,
-      expectJson: true,
-      maxOutputTokens: 1600,
-      temperature: 0.7,
-    });
-
-    const parsed = safeParseJson<ParsedResponse>(raw);
-    if (!parsed?.prompts?.length) {
-      return NextResponse.json(fallbackPrompts(input));
+      const parsed = safeParseJson<ParsedResponse>(raw);
+      if (!parsed?.prompts?.length) {
+        prompts = fallbackPrompts(input);
+      } else {
+        prompts = parsed.prompts
+          .slice(0, input.numberOfPrompts)
+          .map((item, i) => {
+            const category = VALID_CATEGORIES.includes(item.category)
+              ? item.category
+              : VALID_CATEGORIES[i % VALID_CATEGORIES.length];
+            return {
+              id: typeof item.id === "string" && item.id.trim() ? item.id : `p${i + 1}`,
+              category,
+              prompt: typeof item.prompt === "string" ? item.prompt : "",
+              rationale: typeof item.rationale === "string" ? item.rationale : "",
+            };
+          })
+          .filter((p) => p.prompt.length > 0);
+      }
+    } catch {
+      prompts = fallbackPrompts(input);
     }
-
-    const prompts: GeneratedPrompt[] = parsed.prompts
-      .slice(0, input.numberOfPrompts)
-      .map((item, i) => {
-        const category = VALID_CATEGORIES.includes(item.category)
-          ? item.category
-          : VALID_CATEGORIES[i % VALID_CATEGORIES.length];
-        return {
-          id: typeof item.id === "string" && item.id.trim() ? item.id : `p${i + 1}`,
-          category,
-          prompt: typeof item.prompt === "string" ? item.prompt : "",
-          rationale: typeof item.rationale === "string" ? item.rationale : "",
-        };
-      })
-      .filter((p) => p.prompt.length > 0);
-
-    return NextResponse.json(prompts.length ? prompts : fallbackPrompts(input));
-  } catch {
-    return NextResponse.json(fallbackPrompts(input));
   }
+
+  if (!prompts.length) prompts = fallbackPrompts(input);
+
+  const metadata = writeCache("promptGeneration", cacheKey, prompts);
+  console.info(
+    `[generate-prompts] cache miss stored key=${metadata.key} version=${metadata.version} prompts=${prompts.length}`,
+  );
+
+  return jsonResponse(prompts, metadata);
 }

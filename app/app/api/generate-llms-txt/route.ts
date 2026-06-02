@@ -1,3 +1,4 @@
+import { fetchExistingLlmsTxt } from "@/lib/fetch-existing-llms-txt";
 import { fetchPublicPageHtmlForModel } from "@/lib/fetch-public-page-text";
 import { GEMINI_MODEL, generateText } from "@/lib/gemini";
 import {
@@ -17,7 +18,8 @@ const SYSTEM_INSTRUCTION = `You are helping a company author an llms.txt-style m
 
 You receive:
 1) Raw HTML from their homepage URL (scripts and styles removed; may be truncated for length). Use tags and visible text: titles, headings, meta descriptions, nav, links, body copy.
-2) A JSON object with user-provided company fields and a "Tunnel" AI visibility audit (scores, categories, missed prompts, recommendations, possible inaccuracies, how models describe them when mentioned).
+2) Optionally, their current public /llms.txt file (if we could fetch it). When provided, treat it as the baseline: preserve accurate sections, improve structure, and weave in audit findings rather than discarding useful content.
+3) A JSON object with user-provided company fields and a "Tunnel" AI visibility audit (scores, categories, missed prompts, recommendations, possible inaccuracies, how models describe them when mentioned).
 
 Your job is to produce ONE markdown document suitable to publish at /llms.txt (or merge into an existing llms.txt), optimized so AI crawlers and assistants can learn accurate, useful facts about the company.
 
@@ -110,6 +112,17 @@ export async function POST(req: Request) {
 
   const templateMarkdown = buildLlmsTxtMarkdown(company, analysis);
 
+  let existingLlmsTxt: Awaited<ReturnType<typeof fetchExistingLlmsTxt>> = {
+    found: false,
+    ok: false,
+    url: "",
+    content: "",
+    contentTruncated: false,
+  };
+  if (pageUrl) {
+    existingLlmsTxt = await fetchExistingLlmsTxt(company.website);
+  }
+
   const respondWithFallback = (
     reason: "missing_api_key" | "generation_failed",
     message?: string,
@@ -118,6 +131,7 @@ export async function POST(req: Request) {
       markdown: templateMarkdown,
       model: "offline-template",
       websiteFetch,
+      existingLlmsTxt,
       usedFallback: true,
       fallbackReason: reason,
       ...(message ? { fallbackMessage: message } : {}),
@@ -132,12 +146,25 @@ export async function POST(req: Request) {
 
   const reportJson = serializeTunnelReportForPrompt(company, analysis);
 
+  const existingLlmsSection =
+    existingLlmsTxt.found && existingLlmsTxt.content
+      ? `## Existing /llms.txt (fetched from ${existingLlmsTxt.url})
+Merge and improve this baseline where it conflicts with newer audit findings. Preserve accurate facts already stated here.
+
+${existingLlmsTxt.content}
+`
+      : existingLlmsTxt.url
+        ? `## Existing /llms.txt
+No published file was found at ${existingLlmsTxt.url}${existingLlmsTxt.error ? ` (${existingLlmsTxt.error})` : existingLlmsTxt.status === 404 ? " (404)" : ""}. Produce a fresh draft.
+`
+        : "";
+
   const userPrompt = `## Homepage HTML (fetched from ${pageUrl || "n/a"})
 Below is HTML from the live request (script and style tags were removed; content may be truncated for size). Parse structure and visible text.
 
 ${homepageHtml}
 
-## Tunnel company + visibility audit (JSON)
+${existingLlmsSection}## Tunnel company + visibility audit (JSON)
 ${reportJson}
 
 Produce the llms.txt-style markdown document now.`;
@@ -157,6 +184,7 @@ Produce the llms.txt-style markdown document now.`;
       markdown,
       model: GEMINI_MODEL,
       websiteFetch,
+      existingLlmsTxt,
       usedFallback: false,
     });
   } catch (e) {
