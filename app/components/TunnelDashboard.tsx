@@ -2,8 +2,11 @@ import { AnalysisResponse, CompanyInput } from "@/types";
 import Image from "next/image";
 import Link from "next/link";
 import { ExportButton } from "./ExportButton";
+import { LlmsTxtPanel } from "./LlmsTxtPanel";
 import { CategoryBreakdown } from "./CategoryBreakdown";
 import { CompetitorComparison } from "./CompetitorComparison";
+import { SentimentChart } from "./SentimentChart";
+import { RankDistribution } from "./RankDistribution";
 import { MetricCard } from "./MetricCard";
 import { MissedOpportunities } from "./MissedOpportunities";
 import { PositioningSummary } from "./PositioningSummary";
@@ -31,7 +34,7 @@ export function TunnelDashboard({ company, data }: TunnelDashboardProps) {
       <div className="mx-auto max-w-7xl space-y-6">
         <header className="tunnel-report-header rounded-lg border border-slate-200 bg-white p-5 shadow-sm md:p-6">
           <div className="relative z-10">
-            <div className="mb-5 flex items-center gap-2">
+            <div className="mb-5 flex flex-wrap items-center gap-2">
               <Link
                 href="/"
                 className="inline-flex items-center rounded-md border border-slate-200 bg-white/80 px-3 py-1.5 text-sm font-medium text-slate-600 shadow-sm backdrop-blur transition hover:border-slate-300 hover:bg-white hover:text-slate-950"
@@ -39,6 +42,7 @@ export function TunnelDashboard({ company, data }: TunnelDashboardProps) {
                 &lt;- New Analysis
               </Link>
               <ExportButton />
+              <LlmsTxtPanel company={company} data={data} />
             </div>
             <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
               <div>
@@ -104,6 +108,8 @@ export function TunnelDashboard({ company, data }: TunnelDashboardProps) {
         <section className="grid gap-5 md:grid-cols-2">
           <CategoryBreakdown visibilityByCategory={stats.visibilityByCategory} />
           <CompetitorComparison stats={stats} />
+          <SentimentChart analyses={data.promptAnalyses} />
+          <RankDistribution analyses={data.promptAnalyses} />
         </section>
 
         <MissedOpportunities stats={stats} />
