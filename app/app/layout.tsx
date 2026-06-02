@@ -1,5 +1,5 @@
-import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
+import { ClerkProvider } from "@clerk/nextjs";
 import { IBM_Plex_Mono, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 

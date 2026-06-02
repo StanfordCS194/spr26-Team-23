@@ -12,7 +12,7 @@ import {
   PromptAnalysisDetails,
   PromptAnalysis,
 } from "@/types";
-import type { NextApiRequest, NextApiResponse } from "next";
+import { NextResponse } from "next/server";
 
 interface AnalyzeBody {
   company: CompanyInput;
@@ -222,17 +222,21 @@ async function analyzeBatchedResponses(
   }, {});
 }
 
-export default async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse<AnalysisResponse | { error: string }>,
-) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+async function readJson<T>(request: Request): Promise<T | null> {
+  try {
+    return (await request.json()) as T;
+  } catch {
+    return null;
   }
+}
 
-  const body = req.body as AnalyzeBody;
+export async function POST(request: Request) {
+  const body = await readJson<AnalyzeBody>(request);
   if (!body?.company || !body?.prompts?.length) {
-    return res.status(400).json({ error: "Missing company or prompts." });
+    return NextResponse.json(
+      { error: "Missing company or prompts." },
+      { status: 400 },
+    );
   }
 
   console.log(
@@ -284,30 +288,27 @@ export default async function handler(
     }
   }
 
-  try {
-    const analyses: PromptAnalysis[] = body.prompts.map((prompt) => {
-      const response = responsesByPrompt[prompt.id] || "";
-      const details =
-        llmAnalysesByPrompt?.[prompt.id] ||
-        deterministicAnalyze(body.company, prompt, response);
-      return buildPromptAnalysis(prompt, response, details);
-    });
+  const analyses: PromptAnalysis[] = body.prompts.map((prompt) => {
+    const response = responsesByPrompt[prompt.id] || "";
+    const details =
+      llmAnalysesByPrompt?.[prompt.id] ||
+      deterministicAnalyze(body.company, prompt, response);
+    return buildPromptAnalysis(prompt, response, details);
+  });
 
-    const fallbackAnalysisPrompts = body.prompts.filter((p) => !llmAnalysesByPrompt?.[p.id]);
-    console.warn(
-      `[analyze-prompts] Analysis: using Gemini for ${
-        body.prompts.length - fallbackAnalysisPrompts.length
-      }/${body.prompts.length} prompts, deterministic fallback for ${fallbackAnalysisPrompts.length}.`,
-    );
+  const fallbackAnalysisPrompts = body.prompts.filter((p) => !llmAnalysesByPrompt?.[p.id]);
+  console.warn(
+    `[analyze-prompts] Analysis: using Gemini for ${
+      body.prompts.length - fallbackAnalysisPrompts.length
+    }/${body.prompts.length} prompts, deterministic fallback for ${fallbackAnalysisPrompts.length}.`,
+  );
 
-    console.log(`[analyze-prompts] Completed with ${analyses.length} prompt results.`);
+  console.log(`[analyze-prompts] Completed with ${analyses.length} prompt results.`);
 
-    return res.status(200).json({
-      aggregateStats: aggregateAnalyses(body.company, analyses),
-      promptAnalyses: analyses,
-    });
-  } catch (err) {
-    console.error("[analyze-prompts] Unexpected error during aggregation:", err);
-    return res.status(500).json({ error: "Analysis failed. Try demo mode." });
-  }
+  const response: AnalysisResponse = {
+    aggregateStats: aggregateAnalyses(body.company, analyses),
+    promptAnalyses: analyses,
+  };
+
+  return NextResponse.json(response);
 }
