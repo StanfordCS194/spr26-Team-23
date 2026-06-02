@@ -24,6 +24,7 @@ const CATEGORY_LABEL: Record<string, string> = {
 };
 
 const ALL_CATEGORIES: PromptCategory[] = ["discovery", "comparison", "use_case", "niche", "purchase"];
+const ALL_SENTIMENTS: Sentiment[] = ["positive", "neutral", "negative", "not_mentioned"];
 
 const selectClass =
   "rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100";
@@ -31,10 +32,11 @@ const selectClass =
 export function PromptResultTable({ analyses }: PromptResultTableProps) {
   const [openPromptId, setOpenPromptId] = useState<string | null>(null);
   const [filterCategory, setFilterCategory] = useState<PromptCategory | "all">("all");
+  const [filterSentiment, setFilterSentiment] = useState<Sentiment | "all">("all");
 
-  const filtered = analyses.filter(
-    (a) => filterCategory === "all" || a.category === filterCategory,
-  );
+  const filtered = analyses
+    .filter((a) => filterCategory === "all" || a.category === filterCategory)
+    .filter((a) => filterSentiment === "all" || a.analysis.sentiment === filterSentiment);
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm md:p-6">
@@ -61,6 +63,17 @@ export function PromptResultTable({ analyses }: PromptResultTableProps) {
           <option value="all">All categories</option>
           {ALL_CATEGORIES.map((c) => (
             <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
+          ))}
+        </select>
+
+        <select
+          value={filterSentiment}
+          onChange={(e) => setFilterSentiment(e.target.value as Sentiment | "all")}
+          className={selectClass}
+        >
+          <option value="all">All sentiments</option>
+          {ALL_SENTIMENTS.map((s) => (
+            <option key={s} value={s}>{s.replace("_", " ")}</option>
           ))}
         </select>
       </div>
