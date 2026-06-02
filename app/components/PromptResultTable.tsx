@@ -34,6 +34,7 @@ export function PromptResultTable({ analyses }: PromptResultTableProps) {
   const [filterCategory, setFilterCategory] = useState<PromptCategory | "all">("all");
   const [filterSentiment, setFilterSentiment] = useState<Sentiment | "all">("all");
   const [sortByRank, setSortByRank] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const filtered = analyses
     .filter((a) => filterCategory === "all" || a.category === filterCategory)
@@ -47,12 +48,13 @@ export function PromptResultTable({ analyses }: PromptResultTableProps) {
       })
     : filtered;
 
-  const hasFilters = filterCategory !== "all" || filterSentiment !== "all" || sortByRank;
+  const hasFilters = filterCategory !== "all" || filterSentiment !== "all" || sortByRank || searchQuery !== "";
 
   const clearFilters = () => {
     setFilterCategory("all");
     setFilterSentiment("all");
     setSortByRank(false);
+    setSearchQuery("");
   };
 
   return (
@@ -73,7 +75,17 @@ export function PromptResultTable({ analyses }: PromptResultTableProps) {
         </span>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2">
+      <div className="mt-4">
+        <input
+          type="text"
+          placeholder="Search prompts..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100"
+        />
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
         <select
           value={filterCategory}
           onChange={(e) => setFilterCategory(e.target.value as PromptCategory | "all")}
