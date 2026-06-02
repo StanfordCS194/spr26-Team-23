@@ -1,7 +1,7 @@
 "use client";
 
 import { DEMO_COMPANY, getDemoAnalysisResponse } from "@/lib/demo-data";
-import { CompanyInput, GeneratedPrompt } from "@/types";
+import { CompanyInput, GeneratedPrompt, PromptGenerationResponse } from "@/types";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
@@ -78,8 +78,6 @@ export function TunnelInputForm() {
     }
     const query = form.companyName.trim();
     if (query.length < 2) {
-      setSuggestions([]);
-      setShowSuggestions(false);
       return;
     }
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -133,7 +131,8 @@ export function TunnelInputForm() {
 
       if (!response.ok) throw new Error("Could not generate prompts.");
 
-      const data = (await response.json()) as GeneratedPrompt[];
+      const payload = (await response.json()) as GeneratedPrompt[] | PromptGenerationResponse;
+      const data = Array.isArray(payload) ? payload : payload.prompts;
       setPrompts((prev) => [...prev, ...data]);
     } catch (err) {
       const message =
@@ -218,7 +217,15 @@ export function TunnelInputForm() {
                 className={inputClass}
                 placeholder="e.g. Wine Find"
                 value={form.companyName}
-                onChange={(e) => update("companyName", e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  update("companyName", value);
+                  if (value.trim().length < 2) {
+                    setSuggestions([]);
+                    setShowSuggestions(false);
+                    setActiveSuggestionIndex(-1);
+                  }
+                }}
                 onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
                 onKeyDown={(e) => {
                   if (!showSuggestions) return;
@@ -250,11 +257,12 @@ export function TunnelInputForm() {
                           onSelectSuggestion(s);
                         }}
                       >
-                        <img
+                        <Image
                           src={logoUrlFromDomain(s.domain)}
                           alt=""
                           width={20}
                           height={20}
+                          unoptimized
                           className="rounded-sm"
                         />
                         <span className="font-medium">{s.name}</span>
