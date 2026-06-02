@@ -5,6 +5,7 @@ import { ExportButton } from "./ExportButton";
 import { LlmsTxtPanel } from "./LlmsTxtPanel";
 import { CategoryBreakdown } from "./CategoryBreakdown";
 import { CompetitorComparison } from "./CompetitorComparison";
+import { SentimentChart } from "./SentimentChart";
 import { MetricCard } from "./MetricCard";
 import { MissedOpportunities } from "./MissedOpportunities";
 import { PositioningSummary } from "./PositioningSummary";
@@ -106,6 +107,7 @@ export function TunnelDashboard({ company, data }: TunnelDashboardProps) {
         <section className="grid gap-5 md:grid-cols-2">
           <CategoryBreakdown visibilityByCategory={stats.visibilityByCategory} />
           <CompetitorComparison stats={stats} />
+          <SentimentChart analyses={data.promptAnalyses} />
         </section>
 
         <MissedOpportunities stats={stats} />
