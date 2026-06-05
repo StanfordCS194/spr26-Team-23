@@ -18,10 +18,20 @@ interface WebsiteFetchMeta {
   htmlTruncated: boolean;
 }
 
+interface ExistingLlmsTxtMeta {
+  found: boolean;
+  ok: boolean;
+  url: string;
+  status?: number;
+  contentTruncated?: boolean;
+  error?: string;
+}
+
 interface GenerateLlmsTxtResponse {
   markdown?: string;
   model?: string;
   websiteFetch?: WebsiteFetchMeta;
+  existingLlmsTxt?: ExistingLlmsTxtMeta;
   usedFallback?: boolean;
   fallbackReason?: "missing_api_key" | "generation_failed";
   fallbackMessage?: string;
@@ -32,6 +42,7 @@ interface CacheEntry {
   markdown: string;
   model: string;
   websiteFetch: WebsiteFetchMeta | null;
+  existingLlmsTxt: ExistingLlmsTxtMeta | null;
   fallbackNote: string | null;
 }
 
@@ -66,9 +77,11 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [markdown, setMarkdown] = useState("");
+  const [generatedMarkdown, setGeneratedMarkdown] = useState("");
+  const [previewMode, setPreviewMode] = useState<"generated" | "template">("generated");
   const [modelLabel, setModelLabel] = useState<string | null>(null);
   const [websiteMeta, setWebsiteMeta] = useState<WebsiteFetchMeta | null>(null);
+  const [existingLlmsMeta, setExistingLlmsMeta] = useState<ExistingLlmsTxtMeta | null>(null);
   const [fallbackNote, setFallbackNote] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loadToken, setLoadToken] = useState(0);
@@ -81,12 +94,27 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
 
   const cacheRef = useRef(new Map<string, CacheEntry>());
 
+  const offlineTemplate = useMemo(
+    () => buildLlmsTxtMarkdown(company, data),
+    [company, data],
+  );
+
+  const displayMarkdown =
+    previewMode === "template" ? offlineTemplate : generatedMarkdown;
+
+  const canCompareDrafts =
+    status === "ready" &&
+    generatedMarkdown.length > 0 &&
+    generatedMarkdown.trim() !== offlineTemplate.trim();
+
   const applyLocalTemplate = useCallback(
     (note: string) => {
       const md = buildLlmsTxtMarkdown(company, data);
-      setMarkdown(md);
+      setGeneratedMarkdown(md);
+      setPreviewMode("template");
       setModelLabel("Offline template (no LLM)");
       setWebsiteMeta(null);
+      setExistingLlmsMeta(null);
       setFallbackNote(note);
       setStatus("ready");
       setErrorMessage(null);
@@ -99,9 +127,11 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
 
     const cached = cacheRef.current.get(cacheKey);
     if (cached) {
-      setMarkdown(cached.markdown);
+      setGeneratedMarkdown(cached.markdown);
+      setPreviewMode("generated");
       setModelLabel(cached.model);
       setWebsiteMeta(cached.websiteFetch);
+      setExistingLlmsMeta(cached.existingLlmsTxt);
       setFallbackNote(cached.fallbackNote);
       setStatus("ready");
       setErrorMessage(null);
@@ -113,8 +143,10 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
     setErrorMessage(null);
     setModelLabel(null);
     setWebsiteMeta(null);
+    setExistingLlmsMeta(null);
     setFallbackNote(null);
-    setMarkdown("");
+    setGeneratedMarkdown("");
+    setPreviewMode("generated");
 
     (async () => {
       try {
@@ -145,12 +177,15 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
             markdown: body.markdown,
             model: body.model || "unknown",
             websiteFetch: body.websiteFetch ?? null,
+            existingLlmsTxt: body.existingLlmsTxt ?? null,
             fallbackNote: note,
           };
           cacheRef.current.set(cacheKey, entry);
-          setMarkdown(entry.markdown);
+          setGeneratedMarkdown(entry.markdown);
+          setPreviewMode("generated");
           setModelLabel(entry.model);
           setWebsiteMeta(entry.websiteFetch);
+          setExistingLlmsMeta(entry.existingLlmsTxt);
           setFallbackNote(entry.fallbackNote);
           setStatus("ready");
           return;
@@ -177,40 +212,42 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
   }, [open, cacheKey, loadToken, company, data, applyLocalTemplate]);
 
   const handleCopy = useCallback(async () => {
-    if (!markdown) return;
+    if (!displayMarkdown) return;
     try {
-      await navigator.clipboard.writeText(markdown);
+      await navigator.clipboard.writeText(displayMarkdown);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
       setCopied(false);
     }
-  }, [markdown]);
+  }, [displayMarkdown]);
 
   const handleDownload = useCallback(() => {
-    if (!markdown) return;
-    const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+    if (!displayMarkdown) return;
+    const blob = new Blob([displayMarkdown], { type: "text/markdown;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `llms-${safeFilenamePart(company.companyName)}.txt`;
     a.click();
     URL.revokeObjectURL(a.href);
-  }, [markdown, company.companyName]);
+  }, [displayMarkdown, company.companyName]);
 
   const handleRegenerate = useCallback(() => {
     cacheRef.current.delete(cacheKey);
+    setPreviewMode("generated");
     setLoadToken((x) => x + 1);
   }, [cacheKey]);
 
   const handleUseTemplate = useCallback(() => {
-    const md = buildLlmsTxtMarkdown(company, data);
-    setMarkdown(md);
+    setGeneratedMarkdown(offlineTemplate);
+    setPreviewMode("template");
     setModelLabel("Offline template (no LLM)");
     setWebsiteMeta(null);
+    setExistingLlmsMeta(null);
     setFallbackNote("Using the offline template (chosen manually).");
     setStatus("ready");
     setErrorMessage(null);
-  }, [company, data]);
+  }, [offlineTemplate]);
 
   return (
     <>
@@ -243,10 +280,11 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
                   llms.txt-style draft
                 </h2>
                 <p className="mt-1 text-sm leading-6 text-slate-600">
-                  We fetch your homepage HTML (scripts/styles stripped) and send it with your Tunnel
-                  report to <strong className="font-medium text-slate-800">Gemini 3 Flash (preview)</strong>{" "}
-                  when an API key is configured. If Gemini is unavailable or the request fails, you
-                  still get a report-based offline template automatically. Markdown fits the{" "}
+                  We fetch your homepage HTML and any public <code className="text-xs">/llms.txt</code>{" "}
+                  (scripts/styles stripped on HTML) and send them with your Tunnel report to{" "}
+                  <strong className="font-medium text-slate-800">Gemini 3 Flash (preview)</strong> when
+                  an API key is configured. If Gemini is unavailable or the request fails, you still
+                  get a report-based offline template automatically. Markdown fits the{" "}
                   <a
                     href="https://llmstxt.org/"
                     className="font-medium text-sky-700 underline underline-offset-2 hover:text-sky-800"
@@ -304,8 +342,42 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
                       {fallbackNote}
                     </div>
                   ) : null}
+                  {canCompareDrafts ? (
+                    <div
+                      className="mb-3 inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-sm"
+                      role="tablist"
+                      aria-label="Draft preview"
+                    >
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={previewMode === "generated"}
+                        onClick={() => setPreviewMode("generated")}
+                        className={`rounded-md px-3 py-1.5 font-medium transition ${
+                          previewMode === "generated"
+                            ? "bg-white text-slate-950 shadow-sm"
+                            : "text-slate-600 hover:text-slate-900"
+                        }`}
+                      >
+                        Generated draft
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={previewMode === "template"}
+                        onClick={() => setPreviewMode("template")}
+                        className={`rounded-md px-3 py-1.5 font-medium transition ${
+                          previewMode === "template"
+                            ? "bg-white text-slate-950 shadow-sm"
+                            : "text-slate-600 hover:text-slate-900"
+                        }`}
+                      >
+                        Offline template
+                      </button>
+                    </div>
+                  ) : null}
                   <pre className="whitespace-pre-wrap break-words rounded-lg border border-slate-100 bg-slate-50 p-4 text-xs leading-relaxed text-slate-800 md:text-sm">
-                    {markdown}
+                    {displayMarkdown}
                   </pre>
                 </>
               )}
@@ -313,6 +385,12 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
 
             {status === "ready" ? (
               <p className="border-t border-slate-100 px-5 py-2 text-xs text-slate-500">
+                {previewMode === "template" && canCompareDrafts ? (
+                  <>
+                    <span className="font-medium text-slate-700">Viewing:</span> offline template
+                    {" · "}
+                  </>
+                ) : null}
                 {modelLabel ? (
                   <>
                     <span className="font-medium text-slate-700">Model:</span> {modelLabel}
@@ -325,6 +403,17 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
                           : `partial or failed${websiteMeta.error ? ` — ${websiteMeta.error}` : ""}`}
                       </>
                     ) : null}
+                    {existingLlmsMeta?.url ? (
+                      <>
+                        {" "}
+                        · <span className="font-medium text-slate-700">Existing llms.txt:</span>{" "}
+                        {existingLlmsMeta.found
+                          ? `merged (${existingLlmsMeta.url}${existingLlmsMeta.contentTruncated ? ", truncated" : ""})`
+                          : existingLlmsMeta.ok
+                            ? `none at ${existingLlmsMeta.url}`
+                            : `lookup failed${existingLlmsMeta.error ? ` — ${existingLlmsMeta.error}` : ""}`}
+                      </>
+                    ) : null}
                   </>
                 ) : null}
               </p>
@@ -333,7 +422,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
             <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-slate-200 px-5 py-4">
               <button
                 type="button"
-                disabled={status !== "ready" || !markdown}
+                disabled={status !== "ready" || !displayMarkdown}
                 onClick={handleCopy}
                 className="inline-flex cursor-pointer items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -341,7 +430,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
               </button>
               <button
                 type="button"
-                disabled={status !== "ready" || !markdown}
+                disabled={status !== "ready" || !displayMarkdown}
                 onClick={handleDownload}
                 className="inline-flex cursor-pointer items-center rounded-md border border-slate-200 bg-slate-950 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
               >

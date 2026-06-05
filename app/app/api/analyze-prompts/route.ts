@@ -1,16 +1,22 @@
+import {
+  cacheHeaders,
+  createAnalysisCacheKey,
+  readCache,
+  writeCache,
+} from "@/lib/cache";
 import { aggregateAnalyses } from "@/lib/aggregation";
 import {
   buildPromptAnalysis,
   deterministicAnalyze,
 } from "@/lib/analysis";
-import { generateText } from "@/lib/gemini";
+import { GEMINI_MODEL, generateText } from "@/lib/gemini";
 import { safeParseJson } from "@/lib/json-repair";
 import {
   AnalysisResponse,
   CompanyInput,
   GeneratedPrompt,
-  PromptAnalysisDetails,
   PromptAnalysis,
+  PromptAnalysisDetails,
 } from "@/types";
 import { NextResponse } from "next/server";
 
@@ -97,6 +103,10 @@ function fallbackResponse(company: CompanyInput, prompt: GeneratedPrompt): strin
   return `${competitors ? `${competitors} are frequently recommended for this category. ` : ""}${company.companyName} can be relevant for certain users depending on needs.`;
 }
 
+function providerFingerprint(): string {
+  return process.env.GEMINI_API_KEY ? `gemini:${GEMINI_MODEL}` : "local-fallback";
+}
+
 async function generateBatchedAnswers(
   company: CompanyInput,
   prompts: GeneratedPrompt[],
@@ -137,6 +147,7 @@ async function analyzeBatchedResponses(
   prompts: GeneratedPrompt[],
   responses: Record<string, string>,
 ): Promise<Record<string, PromptAnalysisDetails> | null> {
+  const promptById = new Map(prompts.map((prompt) => [prompt.id, prompt]));
   const payload = JSON.stringify({
     target: company.companyName,
     competitors: company.competitors || [],
@@ -152,8 +163,6 @@ async function analyzeBatchedResponses(
     systemInstruction: ANALYSIS_SYSTEM_INSTRUCTION,
     prompt: payload,
     expectJson: true,
-    // Batched analysis JSON can get large; if we hit an output cap we may end up with
-    // truncated/invalid JSON and be forced into deterministic fallback.
     maxOutputTokens: 6500,
     temperature: 0.2,
   });
@@ -172,7 +181,7 @@ async function analyzeBatchedResponses(
   }
 
   return parsed.analyses.reduce<Record<string, PromptAnalysisDetails>>((acc, item) => {
-    const matchingPrompt = prompts.find((p) => p.id === item.promptId);
+    const matchingPrompt = promptById.get(item.promptId);
     if (!matchingPrompt) return acc;
     const deterministic = deterministicAnalyze(
       company,
@@ -230,6 +239,13 @@ async function readJson<T>(request: Request): Promise<T | null> {
   }
 }
 
+function jsonResponse(response: AnalysisResponse, metadata: NonNullable<AnalysisResponse["cache"]>) {
+  return NextResponse.json(
+    { ...response, cache: metadata },
+    { headers: cacheHeaders(metadata) },
+  );
+}
+
 export async function POST(request: Request) {
   const body = await readJson<AnalyzeBody>(request);
   if (!body?.company || !body?.prompts?.length) {
@@ -239,8 +255,18 @@ export async function POST(request: Request) {
     );
   }
 
+  const cacheKey = createAnalysisCacheKey(body.company, body.prompts, providerFingerprint());
+  const cached = readCache<AnalysisResponse>("analysis", cacheKey);
+
+  if (cached) {
+    console.info(
+      `[analyze-prompts] cache hit key=${cached.metadata.key} version=${cached.metadata.version}`,
+    );
+    return jsonResponse(cached.value, cached.metadata);
+  }
+
   console.log(
-    `[analyze-prompts] Starting analysis: company="${body.company.companyName}", prompts=${body.prompts.length}`,
+    `[analyze-prompts] Starting analysis: company="${body.company.companyName}", prompts=${body.prompts.length}, cacheKey=${cacheKey}`,
   );
 
   const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
@@ -303,12 +329,15 @@ export async function POST(request: Request) {
     }/${body.prompts.length} prompts, deterministic fallback for ${fallbackAnalysisPrompts.length}.`,
   );
 
-  console.log(`[analyze-prompts] Completed with ${analyses.length} prompt results.`);
-
   const response: AnalysisResponse = {
     aggregateStats: aggregateAnalyses(body.company, analyses),
     promptAnalyses: analyses,
   };
+  const metadata = writeCache("analysis", cacheKey, response);
 
-  return NextResponse.json(response);
+  console.log(
+    `[analyze-prompts] Completed with ${analyses.length} prompt results. cache miss stored key=${metadata.key} version=${metadata.version}`,
+  );
+
+  return jsonResponse(response, metadata);
 }

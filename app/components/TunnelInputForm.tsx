@@ -1,7 +1,13 @@
 "use client";
 
+import { SignInButton, SignUpButton, useAuth } from "@clerk/nextjs";
 import { DEMO_COMPANY, getDemoAnalysisResponse } from "@/lib/demo-data";
-import { AnalysisResponse, CompanyInput, GeneratedPrompt } from "@/types";
+import {
+  AnalysisResponse,
+  CompanyInput,
+  GeneratedPrompt,
+  PromptGenerationResponse,
+} from "@/types";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
@@ -48,6 +54,7 @@ const labelClass = "mb-2 block text-sm font-medium text-slate-700";
 
 export function TunnelInputForm() {
   const router = useRouter();
+  const { isLoaded, isSignedIn } = useAuth();
   const [form, setForm] = useState<CompanyInput>(defaultState);
   const [prompts, setPrompts] = useState<GeneratedPrompt[]>([]);
   const [loadingStep, setLoadingStep] = useState<"idle" | "generating" | "analyzing">("idle");
@@ -60,6 +67,8 @@ export function TunnelInputForm() {
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
 
   const loading = loadingStep !== "idle";
+  const authPending = !isLoaded;
+  const requiresSignIn = isLoaded && !isSignedIn;
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -131,7 +140,8 @@ export function TunnelInputForm() {
 
       if (!response.ok) throw new Error("Could not generate prompts.");
 
-      const data = (await response.json()) as GeneratedPrompt[];
+      const payload = (await response.json()) as GeneratedPrompt[] | PromptGenerationResponse;
+      const data = Array.isArray(payload) ? payload : payload.prompts;
       setPrompts((prev) => [...prev, ...data]);
     } catch (err) {
       const message =
@@ -235,11 +245,12 @@ export function TunnelInputForm() {
                 value={form.companyName}
                 onChange={(e) => {
                   const value = e.target.value;
+                  update("companyName", value);
                   if (value.trim().length < 2) {
                     setSuggestions([]);
                     setShowSuggestions(false);
+                    setActiveSuggestionIndex(-1);
                   }
-                  update("companyName", value);
                 }}
                 onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
                 onKeyDown={(e) => {
@@ -272,11 +283,12 @@ export function TunnelInputForm() {
                           onSelectSuggestion(s);
                         }}
                       >
-                        <img
+                        <Image
                           src={logoUrlFromDomain(s.domain)}
                           alt=""
                           width={20}
                           height={20}
+                          unoptimized
                           className="rounded-sm"
                         />
                         <span className="font-medium">{s.name}</span>
@@ -395,7 +407,7 @@ export function TunnelInputForm() {
           <button
             type="submit"
             className="inline-flex h-11 items-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={loading}
+            disabled={loading || authPending || requiresSignIn}
           >
             {loadingStep === "generating" && <Spinner />}
             {loadingStep === "generating" ? "Generating..." : "Generate Prompts"}
@@ -403,7 +415,7 @@ export function TunnelInputForm() {
           <button
             type="button"
             className="inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!prompts.length || loading}
+            disabled={!prompts.length || loading || authPending || requiresSignIn}
             onClick={onRunAnalysis}
           >
             {loadingStep === "analyzing" && <Spinner />}
@@ -411,12 +423,29 @@ export function TunnelInputForm() {
           </button>
           <button
             type="button"
-            className="inline-flex h-11 items-center rounded-md border border-emerald-200 bg-emerald-50 px-4 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100"
+            className="inline-flex h-11 items-center rounded-md border border-emerald-200 bg-emerald-50 px-4 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={authPending || requiresSignIn}
             onClick={onUseDemoData}
           >
             Use Demo Data
           </button>
         </div>
+
+        {requiresSignIn && (
+          <div className="mt-4 flex flex-wrap items-center gap-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-3 text-sm text-sky-800">
+            <span className="font-medium">Sign in to generate prompts and view reports.</span>
+            <SignInButton mode="modal">
+              <button className="inline-flex h-9 items-center rounded-md bg-slate-950 px-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800">
+                Sign in
+              </button>
+            </SignInButton>
+            <SignUpButton mode="modal">
+              <button className="inline-flex h-9 items-center rounded-md border border-sky-300 bg-white px-3 text-sm font-semibold text-sky-800 shadow-sm transition hover:bg-sky-100">
+                Create account
+              </button>
+            </SignUpButton>
+          </div>
+        )}
 
         {loadingStep === "analyzing" && (
           <p className="mt-4 animate-pulse text-sm text-sky-700">
