@@ -48,3 +48,13 @@ export async function generateText({
 
   return response.text ?? "";
 }
+
+export async function queryGeminiWithPrompt(prompt: string): Promise<string> {
+  const ai = getGeminiClient();
+  const response = await ai.models.generateContent({
+    model: GEMINI_MODEL,
+    contents: prompt,
+    config: { maxOutputTokens: 300, temperature: 0.7 },
+  });
+  return response.text ?? "";
+}

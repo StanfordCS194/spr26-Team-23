@@ -12,6 +12,8 @@
 
 import OpenAI from "openai";
 
+export const GPT4O_MODEL = "gpt-4o";
+
 let client: OpenAI | null = null;
 
 export function getOpenAIClient(): OpenAI {
@@ -24,4 +26,16 @@ export function getOpenAIClient(): OpenAI {
   }
 
   return client;
+}
+
+export async function queryGPT4oWithPrompt(prompt: string): Promise<string> {
+  const openai = getOpenAIClient();
+  const response = await openai.responses.create({
+    model: GPT4O_MODEL,
+    input: prompt,
+    max_output_tokens: 300,
+    temperature: 0.7,
+    store: false,
+  });
+  return response.output_text ?? "";
 }
