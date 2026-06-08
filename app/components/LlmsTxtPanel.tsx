@@ -249,14 +249,16 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
     setErrorMessage(null);
   }, [offlineTemplate]);
 
+  const handleOpen = useCallback(() => {
+    setCopied(false);
+    setOpen(true);
+  }, []);
+
   return (
     <>
       <button
         type="button"
-        onClick={() => {
-          setCopied(false);
-          setOpen(true);
-        }}
+        onClick={handleOpen}
         className="inline-flex cursor-pointer items-center rounded-md border border-slate-200 bg-white/80 px-3 py-1.5 text-sm font-medium text-slate-600 shadow-sm backdrop-blur transition hover:border-slate-300 hover:bg-white hover:text-slate-950"
       >
         AI visibility draft

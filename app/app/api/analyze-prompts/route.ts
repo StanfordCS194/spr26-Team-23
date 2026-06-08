@@ -9,12 +9,16 @@ import {
   buildPromptAnalysis,
   deterministicAnalyze,
 } from "@/lib/analysis";
-import { GEMINI_MODEL, generateText } from "@/lib/gemini";
+import { queryClaudeWithPrompt } from "@/lib/anthropic";
+import { GEMINI_MODEL, generateText, queryGeminiWithPrompt } from "@/lib/gemini";
 import { safeParseJson } from "@/lib/json-repair";
+import { queryGPT4oWithPrompt } from "@/lib/openai";
 import {
+  AIModel,
   AnalysisResponse,
   CompanyInput,
   GeneratedPrompt,
+  ModelAnalysis,
   PromptAnalysis,
   PromptAnalysisDetails,
 } from "@/types";
@@ -97,17 +101,21 @@ function fallbackResponse(company: CompanyInput, prompt: GeneratedPrompt): strin
   }
   if (prompt.category === "comparison") {
     return `${company.companyName} and other options depend on priorities. ${
-      competitors ? `${competitors} are commonly mentioned alternatives.` : "There are multiple alternatives in this category."
+      competitors
+        ? `${competitors} are commonly mentioned alternatives.`
+        : "There are multiple alternatives in this category."
     }`;
   }
   return `${competitors ? `${competitors} are frequently recommended for this category. ` : ""}${company.companyName} can be relevant for certain users depending on needs.`;
 }
 
-function providerFingerprint(): string {
-  return process.env.GEMINI_API_KEY ? `gemini:${GEMINI_MODEL}` : "local-fallback";
+function providerFingerprint(models: AIModel[]): string {
+  const answerProviders = models.length ? models.join(",") : "local-fallback";
+  const analyzer = process.env.GEMINI_API_KEY ? `analysis:${GEMINI_MODEL}` : "analysis:local";
+  return `answers:${answerProviders}|${analyzer}`;
 }
 
-async function generateBatchedAnswers(
+async function generateBatchedGeminiAnswers(
   company: CompanyInput,
   prompts: GeneratedPrompt[],
 ): Promise<Record<string, string> | null> {
@@ -128,7 +136,7 @@ async function generateBatchedAnswers(
   const parsed = safeParseJson<BatchedAnswersResponse>(raw);
   if (!parsed?.answers?.length) {
     console.warn(
-      "[analyze-prompts] Batched answers JSON parse failed (or missing answers). Raw (first 250 chars):",
+      "[analyze-prompts] Batched Gemini answers JSON parse failed (or missing answers). Raw (first 250 chars):",
       raw.slice(0, 250),
     );
     return null;
@@ -221,14 +229,72 @@ async function analyzeBatchedResponses(
           ? item.competitorWon
           : deterministic.competitorWon,
       explanation:
-        typeof item.explanation === "string"
-          ? item.explanation
-          : deterministic.explanation,
+        typeof item.explanation === "string" ? item.explanation : deterministic.explanation,
       usefulQuote:
         typeof item.usefulQuote === "string" ? item.usefulQuote : deterministic.usefulQuote,
     };
     return acc;
   }, {});
+}
+
+async function queryModelForPrompts(
+  model: AIModel,
+  company: CompanyInput,
+  prompts: GeneratedPrompt[],
+): Promise<Record<string, string>> {
+  if (model === "gemini" && process.env.GEMINI_API_KEY) {
+    try {
+      const batchedAnswers = await generateBatchedGeminiAnswers(company, prompts);
+      if (batchedAnswers && Object.keys(batchedAnswers).length) return batchedAnswers;
+    } catch (err) {
+      console.warn("[analyze-prompts] Batched Gemini answer call failed; trying per-prompt.", err);
+    }
+  }
+
+  const results: Record<string, string> = {};
+  await Promise.all(
+    prompts.map(async (p) => {
+      try {
+        let response = "";
+        if (model === "gpt-4o") response = await queryGPT4oWithPrompt(p.prompt);
+        else if (model === "claude") response = await queryClaudeWithPrompt(p.prompt);
+        else if (process.env.GEMINI_API_KEY) response = await queryGeminiWithPrompt(p.prompt);
+        results[p.id] = response.trim();
+      } catch (err) {
+        console.warn(`[analyze-prompts] ${model} failed for prompt ${p.id}:`, err);
+      }
+    }),
+  );
+  return results;
+}
+
+async function analyzeModelResponses(
+  model: AIModel,
+  company: CompanyInput,
+  prompts: GeneratedPrompt[],
+  responses: Record<string, string>,
+): Promise<ModelAnalysis> {
+  const filled = { ...responses };
+  for (const p of prompts) {
+    if (!filled[p.id]) filled[p.id] = fallbackResponse(company, p);
+  }
+
+  let llmAnalyses: Record<string, PromptAnalysisDetails> | null = null;
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      llmAnalyses = await analyzeBatchedResponses(company, prompts, filled);
+    } catch (err) {
+      console.warn(`[analyze-prompts] Gemini analysis failed for model ${model}:`, err);
+    }
+  }
+
+  const promptAnalyses: PromptAnalysis[] = prompts.map((p) => {
+    const response = filled[p.id] ?? "";
+    const details = llmAnalyses?.[p.id] ?? deterministicAnalyze(company, p, response);
+    return buildPromptAnalysis(p, response, details);
+  });
+
+  return { model, promptAnalyses, aggregateStats: aggregateAnalyses(company, promptAnalyses) };
 }
 
 async function readJson<T>(request: Request): Promise<T | null> {
@@ -255,7 +321,22 @@ export async function POST(request: Request) {
     );
   }
 
-  const cacheKey = createAnalysisCacheKey(body.company, body.prompts, providerFingerprint());
+  const modelsToQuery: AIModel[] = (
+    [
+      { model: "gpt-4o" as AIModel, key: process.env.OPENAI_API_KEY },
+      { model: "claude" as AIModel, key: process.env.ANTHROPIC_API_KEY },
+      { model: "gemini" as AIModel, key: process.env.GEMINI_API_KEY },
+    ] as const
+  )
+    .filter((m) => Boolean(m.key))
+    .map((m) => m.model);
+
+  if (modelsToQuery.length === 0) {
+    console.warn("[analyze-prompts] No API keys found; using deterministic fallback.");
+    modelsToQuery.push("gemini");
+  }
+
+  const cacheKey = createAnalysisCacheKey(body.company, body.prompts, providerFingerprint(modelsToQuery));
   const cached = readCache<AnalysisResponse>("analysis", cacheKey);
 
   if (cached) {
@@ -266,78 +347,41 @@ export async function POST(request: Request) {
   }
 
   console.log(
-    `[analyze-prompts] Starting analysis: company="${body.company.companyName}", prompts=${body.prompts.length}, cacheKey=${cacheKey}`,
+    `[analyze-prompts] Starting analysis: company="${body.company.companyName}", prompts=${body.prompts.length}, models=${modelsToQuery.join(", ")}, cacheKey=${cacheKey}`,
   );
 
-  const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
-  let responsesByPrompt: Record<string, string> = {};
-  let batchedAnswers: Record<string, string> | null = null;
-  let llmAnalysesByPrompt: Record<string, PromptAnalysisDetails> | null = null;
+  try {
+    const responsesByModel = await Promise.all(
+      modelsToQuery.map(async (model) => ({
+        model,
+        responses: await queryModelForPrompts(model, body.company, body.prompts),
+      })),
+    );
 
-  if (!hasGeminiKey) {
-    console.warn("[analyze-prompts] Missing GEMINI_API_KEY; using local fallback.");
-  } else {
-    try {
-      batchedAnswers = await generateBatchedAnswers(body.company, body.prompts);
-      if (batchedAnswers && Object.keys(batchedAnswers).length) {
-        responsesByPrompt = batchedAnswers;
-      } else {
-        console.warn("[analyze-prompts] Failed to parse batched answers JSON.");
-      }
-    } catch (err) {
-      console.warn("[analyze-prompts] Batched answer call failed; using fallback responses.", err);
-    }
+    const modelAnalyses = await Promise.all(
+      responsesByModel.map(({ model, responses }) =>
+        analyzeModelResponses(model, body.company, body.prompts, responses),
+      ),
+    );
+
+    const primary = modelAnalyses[0];
+    const response: AnalysisResponse = {
+      models: modelAnalyses,
+      aggregateStats: primary.aggregateStats,
+      promptAnalyses: primary.promptAnalyses,
+    };
+    const metadata = writeCache("analysis", cacheKey, response);
+
+    console.log(
+      `[analyze-prompts] Completed. Models: ${modelAnalyses.map((m) => m.model).join(", ")}. cache miss stored key=${metadata.key} version=${metadata.version}`,
+    );
+
+    return jsonResponse(response, metadata);
+  } catch (err) {
+    console.error("[analyze-prompts] Unexpected error:", err);
+    return NextResponse.json(
+      { error: "Analysis failed. Try demo mode." },
+      { status: 500 },
+    );
   }
-
-  const fallbackAnswerPrompts = body.prompts.filter((p) => !responsesByPrompt[p.id]);
-  for (const prompt of fallbackAnswerPrompts) {
-    responsesByPrompt[prompt.id] = fallbackResponse(body.company, prompt);
-  }
-  console.warn(
-    `[analyze-prompts] Answers: using Gemini for ${
-      body.prompts.length - fallbackAnswerPrompts.length
-    }/${body.prompts.length} prompts, fallback for ${fallbackAnswerPrompts.length}.`,
-  );
-
-  if (hasGeminiKey) {
-    try {
-      llmAnalysesByPrompt = await analyzeBatchedResponses(
-        body.company,
-        body.prompts,
-        responsesByPrompt,
-      );
-      if (!llmAnalysesByPrompt) {
-        console.warn("[analyze-prompts] Failed to parse batched analyses JSON.");
-      }
-    } catch (err) {
-      console.warn("[analyze-prompts] Batched analysis call failed; using deterministic analysis.", err);
-    }
-  }
-
-  const analyses: PromptAnalysis[] = body.prompts.map((prompt) => {
-    const response = responsesByPrompt[prompt.id] || "";
-    const details =
-      llmAnalysesByPrompt?.[prompt.id] ||
-      deterministicAnalyze(body.company, prompt, response);
-    return buildPromptAnalysis(prompt, response, details);
-  });
-
-  const fallbackAnalysisPrompts = body.prompts.filter((p) => !llmAnalysesByPrompt?.[p.id]);
-  console.warn(
-    `[analyze-prompts] Analysis: using Gemini for ${
-      body.prompts.length - fallbackAnalysisPrompts.length
-    }/${body.prompts.length} prompts, deterministic fallback for ${fallbackAnalysisPrompts.length}.`,
-  );
-
-  const response: AnalysisResponse = {
-    aggregateStats: aggregateAnalyses(body.company, analyses),
-    promptAnalyses: analyses,
-  };
-  const metadata = writeCache("analysis", cacheKey, response);
-
-  console.log(
-    `[analyze-prompts] Completed with ${analyses.length} prompt results. cache miss stored key=${metadata.key} version=${metadata.version}`,
-  );
-
-  return jsonResponse(response, metadata);
 }

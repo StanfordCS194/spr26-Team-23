@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
 import { IBM_Plex_Mono, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
+import { PHProvider } from "./providers";
 
 const jakartaSans = Plus_Jakarta_Sans({
   variable: "--font-jakarta-sans",
@@ -30,7 +31,9 @@ export default function RootLayout({
         lang="en"
         className={`${jakartaSans.variable} ${ibmPlexMono.variable} h-full antialiased`}
       >
-        <body className="min-h-full flex flex-col font-sans">{children}</body>
+        <body className="min-h-full flex flex-col font-sans">
+          <PHProvider>{children}</PHProvider>
+        </body>
       </html>
     </ClerkProvider>
   );

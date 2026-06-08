@@ -1,5 +1,8 @@
+"use client";
+
+import { useState } from "react";
 import { UserButton } from "@clerk/nextjs";
-import { AnalysisResponse, CompanyInput } from "@/types";
+import { AIModel, AnalysisResponse, CompanyInput } from "@/types";
 import Image from "next/image";
 import Link from "next/link";
 import { ExportButton } from "./ExportButton";
@@ -16,18 +19,31 @@ import { PromptResultTable } from "./PromptResultTable";
 import { RecommendationsPanel } from "./RecommendationsPanel";
 import { VisibilityScoreCard } from "./VisibilityScoreCard";
 
+const MODEL_LABELS: Record<AIModel, string> = {
+  "gpt-4o": "GPT-4o",
+  "claude": "Claude",
+  "gemini": "Gemini",
+};
+
 interface TunnelDashboardProps {
   company: CompanyInput;
   data: AnalysisResponse;
 }
 
 export function TunnelDashboard({ company, data }: TunnelDashboardProps) {
-  const stats = data.aggregateStats;
-  const topCompetitorLabel = stats.topCompetitor
-    ? stats.topCompetitor.name
+  const [activeModel, setActiveModel] = useState<AIModel | null>(
+    data.models?.length ? data.models[0].model : null,
+  );
+
+  const activeModelData = data.models?.find((m) => m.model === activeModel) ?? null;
+  const displayStats = activeModelData?.aggregateStats ?? data.aggregateStats;
+  const displayAnalyses = activeModelData?.promptAnalyses ?? data.promptAnalyses;
+
+  const topCompetitorLabel = displayStats.topCompetitor
+    ? displayStats.topCompetitor.name
     : "-";
-  const topCompetitorHelper = stats.topCompetitor
-    ? `${stats.topCompetitor.mentions} mention${stats.topCompetitor.mentions === 1 ? "" : "s"} across prompts`
+  const topCompetitorHelper = displayStats.topCompetitor
+    ? `${displayStats.topCompetitor.mentions} mention${displayStats.topCompetitor.mentions === 1 ? "" : "s"} across prompts`
     : "No competitor mentions detected";
 
   return (
@@ -84,20 +100,39 @@ export function TunnelDashboard({ company, data }: TunnelDashboardProps) {
           </div>
         </header>
 
+        {data.models && data.models.length > 1 && (
+          <div className="flex gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 w-fit">
+            {data.models.map((m) => (
+              <button
+                key={m.model}
+                type="button"
+                onClick={() => setActiveModel(m.model)}
+                className={`rounded-md px-4 py-1.5 text-sm font-semibold transition ${
+                  activeModel === m.model
+                    ? "bg-white text-slate-950 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                {MODEL_LABELS[m.model]}
+              </button>
+            ))}
+          </div>
+        )}
+
         <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <VisibilityScoreCard
-            score={stats.visibilityScore}
-            mentioned={stats.visibilityCount.mentioned}
-            total={stats.visibilityCount.total}
+            score={displayStats.visibilityScore}
+            mentioned={displayStats.visibilityCount.mentioned}
+            total={displayStats.visibilityCount.total}
           />
           <MetricCard
             label="Avg Rank"
-            value={stats.averageRank ?? "-"}
+            value={displayStats.averageRank ?? "-"}
             helper="Average position when mentioned"
           />
           <MetricCard
             label="Prompts Analyzed"
-            value={data.promptAnalyses.length}
+            value={displayAnalyses.length}
             helper="Total prompts evaluated"
           />
           <MetricCard
@@ -107,22 +142,22 @@ export function TunnelDashboard({ company, data }: TunnelDashboardProps) {
           />
         </section>
 
-        <PositioningSummary stats={stats} />
+        <PositioningSummary stats={displayStats} />
 
         <section className="grid gap-5 md:grid-cols-2">
-          <CategoryBreakdown visibilityByCategory={stats.visibilityByCategory} />
-          <CompetitorComparison stats={stats} />
-          <SentimentChart analyses={data.promptAnalyses} />
-          <RankDistribution analyses={data.promptAnalyses} />
+          <CategoryBreakdown visibilityByCategory={displayStats.visibilityByCategory} />
+          <CompetitorComparison stats={displayStats} />
+          <SentimentChart analyses={displayAnalyses} />
+          <RankDistribution analyses={displayAnalyses} />
         </section>
 
-        <MissedOpportunities stats={stats} />
+        <MissedOpportunities stats={displayStats} />
 
-        <PromptResultTable analyses={data.promptAnalyses} />
+        <PromptResultTable analyses={displayAnalyses} />
 
-        <PossibleInaccuracies stats={stats} />
+        <PossibleInaccuracies stats={displayStats} />
 
-        <RecommendationsPanel stats={stats} />
+        <RecommendationsPanel stats={displayStats} />
       </div>
     </main>
   );

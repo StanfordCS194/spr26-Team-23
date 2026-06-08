@@ -10,6 +10,7 @@ import {
 } from "@/types";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import posthog from "posthog-js";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { PromptGenerationPreview } from "./PromptGenerationPreview";
 
@@ -131,6 +132,12 @@ export function TunnelInputForm() {
     event.preventDefault();
     setLoadingStep("generating");
     setError(null);
+    posthog.capture("form_submitted", {
+      company_name: form.companyName,
+      category: form.category,
+      num_competitors: form.competitors?.length ?? 0,
+      num_prompts_requested: form.numberOfPrompts,
+    });
     try {
       const response = await fetch("/api/generate-prompts", {
         method: "POST",
@@ -143,9 +150,15 @@ export function TunnelInputForm() {
       const payload = (await response.json()) as GeneratedPrompt[] | PromptGenerationResponse;
       const data = Array.isArray(payload) ? payload : payload.prompts;
       setPrompts((prev) => [...prev, ...data]);
+      posthog.capture("prompts_generated", {
+        success: true,
+        num_prompts: data.length,
+        company_name: form.companyName,
+      });
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Prompt generation failed. Try Demo Mode.";
+      posthog.capture("prompts_generated", { success: false, company_name: form.companyName });
       setError(message);
     } finally {
       setLoadingStep("idle");
@@ -171,6 +184,10 @@ export function TunnelInputForm() {
   const onRunAnalysis = async () => {
     setLoadingStep("analyzing");
     setError(null);
+    posthog.capture("analysis_started", {
+      company_name: form.companyName,
+      num_prompts: prompts.length,
+    });
     try {
       const response = await fetch("/api/analyze-prompts", {
         method: "POST",
@@ -190,6 +207,12 @@ export function TunnelInputForm() {
       }
 
       const analysis = (await response.json()) as AnalysisResponse;
+      posthog.capture("analysis_completed", {
+        success: true,
+        company_name: form.companyName,
+        num_models: analysis.models?.length ?? 1,
+        visibility_score: analysis.aggregateStats?.visibilityScore,
+      });
       window.localStorage.setItem(
         "tunnel-latest-report",
         JSON.stringify({ company: form, analysis }),
@@ -199,6 +222,7 @@ export function TunnelInputForm() {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Analysis failed. Try demo mode.";
+      posthog.capture("analysis_completed", { success: false, company_name: form.companyName });
       setError(message);
     } finally {
       setLoadingStep("idle");
@@ -206,6 +230,7 @@ export function TunnelInputForm() {
   };
 
   const onUseDemoData = () => {
+    posthog.capture("demo_mode_used");
     const analysis = getDemoAnalysisResponse();
     window.localStorage.setItem(
       "tunnel-latest-report",
