@@ -14,22 +14,25 @@ It simulates realistic prompts, runs AI responses, analyzes visibility vs compet
    ```bash
    pnpm install
    ```
-2. Add your Gemini API key in `app/.env.local`:
+2. Add environment variables in `app/.env.local`:
    ```bash
+   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
+   CLERK_SECRET_KEY=your_clerk_secret_key
+   DATABASE_URL="postgres://prisma.[PROJECT-REF]:[PRISMA-PASSWORD]@[DB-REGION].pooler.supabase.com:6543/postgres"
    GEMINI_API_KEY=your_key_here
-   ```
-   The app uses Google Gemini (`gemini-3-flash-preview`) for prompt generation and AI responses.
-   You can override the model by setting `GEMINI_MODEL` in `app/.env.local`.
-3. Add your Clerk keys and local auth routes in `app/.env.local`:
-   ```bash
-   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
-   CLERK_SECRET_KEY=sk_test_...
    NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
    NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
    NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/dashboard
    NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/dashboard
    ```
+   The app uses Google Gemini (`gemini-3-flash-preview`) for prompt generation and AI responses.
+   You can override the model by setting `GEMINI_MODEL` in `app/.env.local`.
    Clerk wraps the app in `app/layout.tsx`, serves custom auth UI at `/sign-in` and `/sign-up`, and protects `/dashboard`, `/api/generate-prompts`, and `/api/analyze-prompts` through `proxy.ts`.
+3. Apply the Prisma migration to Supabase:
+   ```bash
+   pnpm prisma:deploy
+   ```
+   `DATABASE_URL` should point at your Supabase Postgres connection string. For serverless deployments, use Supabase's transaction pooler string on port `6543`.
 4. Run the app:
    ```bash
    pnpm dev

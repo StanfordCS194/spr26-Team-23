@@ -1,5 +1,6 @@
 "use client";
 
+import { useUser } from "@clerk/nextjs";
 import { TunnelDashboard } from "@/components/TunnelDashboard";
 import { DEMO_COMPANY, getDemoAnalysisResponse } from "@/lib/demo-data";
 import { AnalysisResponse, CompanyInput } from "@/types";
@@ -25,19 +26,53 @@ function readStoredPayload(): StoredTunnelData | null {
 }
 
 export default function DashboardPage() {
+  const { isLoaded, isSignedIn } = useUser();
   const [hydrated, setHydrated] = useState(false);
   const [payload, setPayload] = useState<StoredTunnelData | null>(null);
 
   useEffect(() => {
-    const stored = readStoredPayload();
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPayload(stored);
-    setHydrated(true);
-    posthog.capture("dashboard_viewed", {
-      source: stored ? "stored" : "demo",
-      company_name: stored?.company?.companyName ?? "Wine Find",
-    });
-  }, []);
+    if (!isLoaded) return;
+
+    let active = true;
+
+    async function loadReport() {
+      let nextPayload = readStoredPayload();
+      let source = nextPayload ? "stored" : "demo";
+
+      if (isSignedIn) {
+        try {
+          const response = await fetch("/api/reports/latest");
+          if (response.ok) {
+            const data = (await response.json()) as { report?: StoredTunnelData | null };
+            if (data.report) {
+              nextPayload = {
+                company: data.report.company,
+                analysis: data.report.analysis,
+              };
+              source = "database";
+            }
+          }
+        } catch {
+          // Fall back to the local copy when the database is unavailable.
+        }
+      }
+
+      if (active) {
+        setPayload(nextPayload);
+        setHydrated(true);
+        posthog.capture("dashboard_viewed", {
+          source,
+          company_name: nextPayload?.company.companyName ?? "Wine Find",
+        });
+      }
+    }
+
+    void loadReport();
+
+    return () => {
+      active = false;
+    };
+  }, [isLoaded, isSignedIn]);
 
   if (!hydrated) {
     return <main className="min-h-screen" />;

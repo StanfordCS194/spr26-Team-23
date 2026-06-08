@@ -2,7 +2,12 @@
 
 import { SignInButton, SignUpButton, useAuth } from "@clerk/nextjs";
 import { DEMO_COMPANY, getDemoAnalysisResponse } from "@/lib/demo-data";
-import { CompanyInput, GeneratedPrompt, PromptGenerationResponse } from "@/types";
+import {
+  AnalysisResponse,
+  CompanyInput,
+  GeneratedPrompt,
+  PromptGenerationResponse,
+} from "@/types";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import posthog from "posthog-js";
@@ -160,6 +165,22 @@ export function TunnelInputForm() {
     }
   };
 
+  const saveReport = async (analysis: AnalysisResponse) => {
+    try {
+      const response = await fetch("/api/reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ company: form, prompts, analysis }),
+      });
+
+      if (!response.ok && response.status !== 401) {
+        console.warn("[reports] Could not save report:", await response.text());
+      }
+    } catch (error) {
+      console.warn("[reports] Could not save report:", error);
+    }
+  };
+
   const onRunAnalysis = async () => {
     setLoadingStep("analyzing");
     setError(null);
@@ -185,7 +206,7 @@ export function TunnelInputForm() {
         throw new Error(apiError);
       }
 
-      const analysis = await response.json();
+      const analysis = (await response.json()) as AnalysisResponse;
       posthog.capture("analysis_completed", {
         success: true,
         company_name: form.companyName,
@@ -196,6 +217,7 @@ export function TunnelInputForm() {
         "tunnel-latest-report",
         JSON.stringify({ company: form, analysis }),
       );
+      await saveReport(analysis);
       router.push("/dashboard");
     } catch (error) {
       const message =
