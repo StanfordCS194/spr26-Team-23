@@ -24,6 +24,19 @@ export interface GeneratedPrompt {
   rationale: string;
 }
 
+export interface CacheMetadata {
+  status: "hit" | "miss";
+  key: string;
+  version: string;
+  createdAt: string;
+  ttlSeconds: number;
+}
+
+export interface PromptGenerationResponse {
+  prompts: GeneratedPrompt[];
+  cache: CacheMetadata;
+}
+
 export interface PromptAnalysisDetails {
   targetMentioned: boolean;
   targetRank: number | null;
@@ -107,4 +120,5 @@ export interface AnalysisResponse {
   models?: ModelAnalysis[];
   aggregateStats: AggregateStats;
   promptAnalyses: PromptAnalysis[];
+  cache?: CacheMetadata;
 }

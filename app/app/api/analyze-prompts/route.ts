@@ -1,7 +1,16 @@
+import {
+  cacheHeaders,
+  createAnalysisCacheKey,
+  readCache,
+  writeCache,
+} from "@/lib/cache";
 import { aggregateAnalyses } from "@/lib/aggregation";
-import { buildPromptAnalysis, deterministicAnalyze } from "@/lib/analysis";
+import {
+  buildPromptAnalysis,
+  deterministicAnalyze,
+} from "@/lib/analysis";
 import { queryClaudeWithPrompt } from "@/lib/anthropic";
-import { generateText, queryGeminiWithPrompt } from "@/lib/gemini";
+import { GEMINI_MODEL, generateText, queryGeminiWithPrompt } from "@/lib/gemini";
 import { safeParseJson } from "@/lib/json-repair";
 import { queryGPT4oWithPrompt } from "@/lib/openai";
 import {
@@ -13,12 +22,37 @@ import {
   PromptAnalysis,
   PromptAnalysisDetails,
 } from "@/types";
-import type { NextApiRequest, NextApiResponse } from "next";
+import { NextResponse } from "next/server";
 
 interface AnalyzeBody {
   company: CompanyInput;
   prompts: GeneratedPrompt[];
 }
+
+const ANSWER_SYSTEM_INSTRUCTION = `You are simulating a normal AI assistant answering real user product discovery questions.
+
+Answer each prompt naturally, neutrally, and helpfully.
+
+Do not optimize for any specific company.
+Do not force any particular brand into the answer.
+Only mention companies/products that you would realistically mention based on the prompt.
+If the prompt asks for recommendations, provide a concise ranked or grouped answer.
+If you are uncertain, say so briefly.
+Do not reveal that this is part of an evaluation.
+
+Keep each answer concise, around 60 words maximum.
+
+Return ONLY valid JSON in this shape:
+{
+  "answers": [
+    { "promptId": "p1", "response": "..." }
+  ]
+}
+
+Rules:
+- Include exactly one answer per promptId provided.
+- Keep each response short and direct.
+- Return parseable JSON only (no markdown).`;
 
 const ANALYSIS_SYSTEM_INSTRUCTION = `You are Tunnel's response analysis engine.
 
@@ -50,6 +84,10 @@ Rules:
 - Do not invent facts not present in response.
 - Return parseable JSON only.`;
 
+interface BatchedAnswersResponse {
+  answers?: Array<{ promptId: string; response: string }>;
+}
+
 interface BatchedAnalysesResponse {
   analyses?: Array<{ promptId: string } & Partial<PromptAnalysisDetails>>;
 }
@@ -71,11 +109,53 @@ function fallbackResponse(company: CompanyInput, prompt: GeneratedPrompt): strin
   return `${competitors ? `${competitors} are frequently recommended for this category. ` : ""}${company.companyName} can be relevant for certain users depending on needs.`;
 }
 
+function providerFingerprint(models: AIModel[]): string {
+  const answerProviders = models.length ? models.join(",") : "local-fallback";
+  const analyzer = process.env.GEMINI_API_KEY ? `analysis:${GEMINI_MODEL}` : "analysis:local";
+  return `answers:${answerProviders}|${analyzer}`;
+}
+
+async function generateBatchedGeminiAnswers(
+  company: CompanyInput,
+  prompts: GeneratedPrompt[],
+): Promise<Record<string, string> | null> {
+  const payload = JSON.stringify({
+    companyName: company.companyName,
+    category: company.category,
+    prompts: prompts.map((p) => ({ promptId: p.id, prompt: p.prompt, category: p.category })),
+  });
+
+  const raw = await generateText({
+    systemInstruction: ANSWER_SYSTEM_INSTRUCTION,
+    prompt: payload,
+    expectJson: true,
+    maxOutputTokens: 2600,
+    temperature: 0.7,
+  });
+
+  const parsed = safeParseJson<BatchedAnswersResponse>(raw);
+  if (!parsed?.answers?.length) {
+    console.warn(
+      "[analyze-prompts] Batched Gemini answers JSON parse failed (or missing answers). Raw (first 250 chars):",
+      raw.slice(0, 250),
+    );
+    return null;
+  }
+
+  return parsed.answers.reduce<Record<string, string>>((acc, item) => {
+    if (item?.promptId && typeof item.response === "string") {
+      acc[item.promptId] = item.response.trim();
+    }
+    return acc;
+  }, {});
+}
+
 async function analyzeBatchedResponses(
   company: CompanyInput,
   prompts: GeneratedPrompt[],
   responses: Record<string, string>,
 ): Promise<Record<string, PromptAnalysisDetails> | null> {
+  const promptById = new Map(prompts.map((prompt) => [prompt.id, prompt]));
   const payload = JSON.stringify({
     target: company.companyName,
     competitors: company.competitors || [],
@@ -98,14 +178,18 @@ async function analyzeBatchedResponses(
   const parsed = safeParseJson<BatchedAnalysesResponse>(raw);
   if (!parsed?.analyses?.length) {
     console.warn(
-      "[analyze-prompts] Batched analyses JSON parse failed. Raw (first 250 chars):",
+      "[analyze-prompts] Batched analyses JSON parse failed (or missing analyses). Raw (first 250 chars):",
       raw.slice(0, 250),
+    );
+    console.warn(
+      "[analyze-prompts] Batched analyses JSON parse failed. Raw length and tail:",
+      { length: raw.length, tail: raw.slice(Math.max(0, raw.length - 250)) },
     );
     return null;
   }
 
   return parsed.analyses.reduce<Record<string, PromptAnalysisDetails>>((acc, item) => {
-    const matchingPrompt = prompts.find((p) => p.id === item.promptId);
+    const matchingPrompt = promptById.get(item.promptId);
     if (!matchingPrompt) return acc;
     const deterministic = deterministicAnalyze(
       company,
@@ -119,8 +203,7 @@ async function analyzeBatchedResponses(
         typeof item.targetMentioned === "boolean"
           ? item.targetMentioned
           : deterministic.targetMentioned,
-      targetRank:
-        typeof item.targetRank === "number" ? item.targetRank : deterministic.targetRank,
+      targetRank: typeof item.targetRank === "number" ? item.targetRank : deterministic.targetRank,
       mentionedCompetitors: Array.isArray(item.mentionedCompetitors)
         ? item.mentionedCompetitors.filter((x): x is string => typeof x === "string")
         : deterministic.mentionedCompetitors,
@@ -156,8 +239,18 @@ async function analyzeBatchedResponses(
 
 async function queryModelForPrompts(
   model: AIModel,
+  company: CompanyInput,
   prompts: GeneratedPrompt[],
 ): Promise<Record<string, string>> {
+  if (model === "gemini" && process.env.GEMINI_API_KEY) {
+    try {
+      const batchedAnswers = await generateBatchedGeminiAnswers(company, prompts);
+      if (batchedAnswers && Object.keys(batchedAnswers).length) return batchedAnswers;
+    } catch (err) {
+      console.warn("[analyze-prompts] Batched Gemini answer call failed; trying per-prompt.", err);
+    }
+  }
+
   const results: Record<string, string> = {};
   await Promise.all(
     prompts.map(async (p) => {
@@ -165,7 +258,7 @@ async function queryModelForPrompts(
         let response = "";
         if (model === "gpt-4o") response = await queryGPT4oWithPrompt(p.prompt);
         else if (model === "claude") response = await queryClaudeWithPrompt(p.prompt);
-        else response = await queryGeminiWithPrompt(p.prompt);
+        else if (process.env.GEMINI_API_KEY) response = await queryGeminiWithPrompt(p.prompt);
         results[p.id] = response.trim();
       } catch (err) {
         console.warn(`[analyze-prompts] ${model} failed for prompt ${p.id}:`, err);
@@ -204,22 +297,29 @@ async function analyzeModelResponses(
   return { model, promptAnalyses, aggregateStats: aggregateAnalyses(company, promptAnalyses) };
 }
 
-export default async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse<AnalysisResponse | { error: string }>,
-) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+async function readJson<T>(request: Request): Promise<T | null> {
+  try {
+    return (await request.json()) as T;
+  } catch {
+    return null;
   }
+}
 
-  const body = req.body as AnalyzeBody;
-  if (!body?.company || !body?.prompts?.length) {
-    return res.status(400).json({ error: "Missing company or prompts." });
-  }
-
-  console.log(
-    `[analyze-prompts] Starting analysis: company="${body.company.companyName}", prompts=${body.prompts.length}`,
+function jsonResponse(response: AnalysisResponse, metadata: NonNullable<AnalysisResponse["cache"]>) {
+  return NextResponse.json(
+    { ...response, cache: metadata },
+    { headers: cacheHeaders(metadata) },
   );
+}
+
+export async function POST(request: Request) {
+  const body = await readJson<AnalyzeBody>(request);
+  if (!body?.company || !body?.prompts?.length) {
+    return NextResponse.json(
+      { error: "Missing company or prompts." },
+      { status: 400 },
+    );
+  }
 
   const modelsToQuery: AIModel[] = (
     [
@@ -236,13 +336,25 @@ export default async function handler(
     modelsToQuery.push("gemini");
   }
 
-  console.log(`[analyze-prompts] Querying models: ${modelsToQuery.join(", ")}`);
+  const cacheKey = createAnalysisCacheKey(body.company, body.prompts, providerFingerprint(modelsToQuery));
+  const cached = readCache<AnalysisResponse>("analysis", cacheKey);
+
+  if (cached) {
+    console.info(
+      `[analyze-prompts] cache hit key=${cached.metadata.key} version=${cached.metadata.version}`,
+    );
+    return jsonResponse(cached.value, cached.metadata);
+  }
+
+  console.log(
+    `[analyze-prompts] Starting analysis: company="${body.company.companyName}", prompts=${body.prompts.length}, models=${modelsToQuery.join(", ")}, cacheKey=${cacheKey}`,
+  );
 
   try {
     const responsesByModel = await Promise.all(
       modelsToQuery.map(async (model) => ({
         model,
-        responses: await queryModelForPrompts(model, body.prompts),
+        responses: await queryModelForPrompts(model, body.company, body.prompts),
       })),
     );
 
@@ -253,18 +365,23 @@ export default async function handler(
     );
 
     const primary = modelAnalyses[0];
-
-    console.log(
-      `[analyze-prompts] Completed. Models: ${modelAnalyses.map((m) => m.model).join(", ")}`,
-    );
-
-    return res.status(200).json({
+    const response: AnalysisResponse = {
       models: modelAnalyses,
       aggregateStats: primary.aggregateStats,
       promptAnalyses: primary.promptAnalyses,
-    });
+    };
+    const metadata = writeCache("analysis", cacheKey, response);
+
+    console.log(
+      `[analyze-prompts] Completed. Models: ${modelAnalyses.map((m) => m.model).join(", ")}. cache miss stored key=${metadata.key} version=${metadata.version}`,
+    );
+
+    return jsonResponse(response, metadata);
   } catch (err) {
     console.error("[analyze-prompts] Unexpected error:", err);
-    return res.status(500).json({ error: "Analysis failed. Try demo mode." });
+    return NextResponse.json(
+      { error: "Analysis failed. Try demo mode." },
+      { status: 500 },
+    );
   }
 }
