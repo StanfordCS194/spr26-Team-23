@@ -212,7 +212,41 @@ export function PromptResultTable({ analyses }: PromptResultTableProps) {
               </button>
 
               {isOpen && item.response ? (
-                <RawResponseViewer response={item.response} />
+                <div className="mt-3 space-y-3">
+                  <RawResponseViewer response={item.response} />
+                  {item.grounded !== undefined && (
+                    <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                      <p className="text-sm font-semibold text-slate-950">
+                        Referenced sources
+                      </p>
+                      {item.sources?.length ? (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {item.sources.map((source) => (
+                            <a
+                              key={`${source.provider}-${source.url}`}
+                              href={source.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="max-w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:border-sky-300 hover:text-sky-800"
+                              title={source.url}
+                            >
+                              <span className="block max-w-xs truncate font-medium">
+                                {source.title || source.domain}
+                              </span>
+                              <span className="mt-0.5 block text-xs text-slate-500">
+                                {source.domain}
+                              </span>
+                            </a>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-sm text-slate-500">
+                          No sources returned for this answer.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
               ) : null}
             </div>
           );

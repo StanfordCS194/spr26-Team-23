@@ -3,6 +3,7 @@ import { safeParseJson } from "@/lib/json-repair";
 import {
   CompanyInput,
   GeneratedPrompt,
+  ModelAnswer,
   PromptAnalysis,
   PromptAnalysisDetails,
   Sentiment,
@@ -187,16 +188,20 @@ export async function analyzeResponseStructured(
 
 export function buildPromptAnalysis(
   prompt: GeneratedPrompt,
-  response: string,
+  responseOrAnswer: string | ModelAnswer,
   details: PromptAnalysisDetails,
   error?: string,
 ): PromptAnalysis {
+  const response = typeof responseOrAnswer === "string" ? responseOrAnswer : responseOrAnswer.response;
+  const answer = typeof responseOrAnswer === "string" ? null : responseOrAnswer;
+
   return {
     promptId: prompt.id,
     prompt: prompt.prompt,
     category: prompt.category,
     rationale: prompt.rationale,
     response,
+    ...(answer ? { sources: answer.sources, grounded: answer.grounded } : {}),
     error,
     analysis: details,
   };

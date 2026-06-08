@@ -9,24 +9,29 @@ import {
   buildPromptAnalysis,
   deterministicAnalyze,
 } from "@/lib/analysis";
-import { queryClaudeWithPrompt } from "@/lib/anthropic";
-import { GEMINI_MODEL, generateText, queryGeminiWithPrompt } from "@/lib/gemini";
+import { queryClaudeWithPrompt, queryClaudeWithWebPrompt } from "@/lib/anthropic";
+import { GEMINI_MODEL, generateText, queryGeminiWithPrompt, queryGeminiWithWebPrompt } from "@/lib/gemini";
 import { safeParseJson } from "@/lib/json-repair";
-import { queryGPT4oWithPrompt } from "@/lib/openai";
+import { queryGPT4oWithPrompt, queryGPT4oWithWebPrompt } from "@/lib/openai";
 import {
   AIModel,
+  AnalysisMode,
   AnalysisResponse,
   CompanyInput,
   GeneratedPrompt,
+  ModelAnswer,
   ModelAnalysis,
   PromptAnalysis,
   PromptAnalysisDetails,
 } from "@/types";
 import { NextResponse } from "next/server";
 
+const MAX_WEB_PROMPTS = 15;
+
 interface AnalyzeBody {
   company: CompanyInput;
   prompts: GeneratedPrompt[];
+  analysisMode?: AnalysisMode;
 }
 
 const ANSWER_SYSTEM_INSTRUCTION = `You are simulating a normal AI assistant answering real user product discovery questions.
@@ -109,10 +114,18 @@ function fallbackResponse(company: CompanyInput, prompt: GeneratedPrompt): strin
   return `${competitors ? `${competitors} are frequently recommended for this category. ` : ""}${company.companyName} can be relevant for certain users depending on needs.`;
 }
 
-function providerFingerprint(models: AIModel[]): string {
+function providerFingerprint(models: AIModel[], analysisMode: AnalysisMode): string {
   const answerProviders = models.length ? models.join(",") : "local-fallback";
   const analyzer = process.env.GEMINI_API_KEY ? `analysis:${GEMINI_MODEL}` : "analysis:local";
-  return `answers:${answerProviders}|${analyzer}`;
+  return `mode:${analysisMode}|answers:${answerProviders}|${analyzer}`;
+}
+
+function asModelAnswer(response: string): ModelAnswer {
+  return {
+    response,
+    sources: [],
+    grounded: false,
+  };
 }
 
 async function generateBatchedGeminiAnswers(
@@ -241,25 +254,37 @@ async function queryModelForPrompts(
   model: AIModel,
   company: CompanyInput,
   prompts: GeneratedPrompt[],
-): Promise<Record<string, string>> {
-  if (model === "gemini" && process.env.GEMINI_API_KEY) {
+  analysisMode: AnalysisMode,
+): Promise<Record<string, ModelAnswer>> {
+  if (analysisMode === "standard" && model === "gemini" && process.env.GEMINI_API_KEY) {
     try {
       const batchedAnswers = await generateBatchedGeminiAnswers(company, prompts);
-      if (batchedAnswers && Object.keys(batchedAnswers).length) return batchedAnswers;
+      if (batchedAnswers && Object.keys(batchedAnswers).length) {
+        return Object.fromEntries(
+          Object.entries(batchedAnswers).map(([id, response]) => [id, asModelAnswer(response)]),
+        );
+      }
     } catch (err) {
       console.warn("[analyze-prompts] Batched Gemini answer call failed; trying per-prompt.", err);
     }
   }
 
-  const results: Record<string, string> = {};
+  const results: Record<string, ModelAnswer> = {};
   await Promise.all(
     prompts.map(async (p) => {
       try {
+        if (analysisMode === "web") {
+          if (model === "gpt-4o") results[p.id] = await queryGPT4oWithWebPrompt(p.prompt);
+          else if (model === "claude") results[p.id] = await queryClaudeWithWebPrompt(p.prompt);
+          else if (process.env.GEMINI_API_KEY) results[p.id] = await queryGeminiWithWebPrompt(p.prompt);
+          return;
+        }
+
         let response = "";
         if (model === "gpt-4o") response = await queryGPT4oWithPrompt(p.prompt);
         else if (model === "claude") response = await queryClaudeWithPrompt(p.prompt);
         else if (process.env.GEMINI_API_KEY) response = await queryGeminiWithPrompt(p.prompt);
-        results[p.id] = response.trim();
+        results[p.id] = asModelAnswer(response.trim());
       } catch (err) {
         console.warn(`[analyze-prompts] ${model} failed for prompt ${p.id}:`, err);
       }
@@ -272,26 +297,31 @@ async function analyzeModelResponses(
   model: AIModel,
   company: CompanyInput,
   prompts: GeneratedPrompt[],
-  responses: Record<string, string>,
+  answers: Record<string, ModelAnswer>,
+  analysisMode: AnalysisMode,
 ): Promise<ModelAnalysis> {
-  const filled = { ...responses };
+  const filled = { ...answers };
   for (const p of prompts) {
-    if (!filled[p.id]) filled[p.id] = fallbackResponse(company, p);
+    if (!filled[p.id]) filled[p.id] = asModelAnswer(fallbackResponse(company, p));
   }
+
+  const responses = Object.fromEntries(
+    Object.entries(filled).map(([promptId, answer]) => [promptId, answer.response]),
+  );
 
   let llmAnalyses: Record<string, PromptAnalysisDetails> | null = null;
   if (process.env.GEMINI_API_KEY) {
     try {
-      llmAnalyses = await analyzeBatchedResponses(company, prompts, filled);
+      llmAnalyses = await analyzeBatchedResponses(company, prompts, responses);
     } catch (err) {
       console.warn(`[analyze-prompts] Gemini analysis failed for model ${model}:`, err);
     }
   }
 
   const promptAnalyses: PromptAnalysis[] = prompts.map((p) => {
-    const response = filled[p.id] ?? "";
-    const details = llmAnalyses?.[p.id] ?? deterministicAnalyze(company, p, response);
-    return buildPromptAnalysis(p, response, details);
+    const answer = filled[p.id] ?? asModelAnswer("");
+    const details = llmAnalyses?.[p.id] ?? deterministicAnalyze(company, p, answer.response);
+    return buildPromptAnalysis(p, analysisMode === "web" ? answer : answer.response, details);
   });
 
   return { model, promptAnalyses, aggregateStats: aggregateAnalyses(company, promptAnalyses) };
@@ -320,6 +350,14 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  const analysisMode: AnalysisMode = body.analysisMode === "web" ? "web" : "standard";
+
+  if (analysisMode === "web" && body.prompts.length > MAX_WEB_PROMPTS) {
+    return NextResponse.json(
+      { error: `Web mode supports up to ${MAX_WEB_PROMPTS} prompts. Reduce the prompt list and try again.` },
+      { status: 400 },
+    );
+  }
 
   const modelsToQuery: AIModel[] = (
     [
@@ -336,7 +374,11 @@ export async function POST(request: Request) {
     modelsToQuery.push("gemini");
   }
 
-  const cacheKey = createAnalysisCacheKey(body.company, body.prompts, providerFingerprint(modelsToQuery));
+  const cacheKey = createAnalysisCacheKey(
+    body.company,
+    body.prompts,
+    providerFingerprint(modelsToQuery, analysisMode),
+  );
   const cached = readCache<AnalysisResponse>("analysis", cacheKey);
 
   if (cached) {
@@ -347,25 +389,26 @@ export async function POST(request: Request) {
   }
 
   console.log(
-    `[analyze-prompts] Starting analysis: company="${body.company.companyName}", prompts=${body.prompts.length}, models=${modelsToQuery.join(", ")}, cacheKey=${cacheKey}`,
+    `[analyze-prompts] Starting analysis: company="${body.company.companyName}", prompts=${body.prompts.length}, mode=${analysisMode}, models=${modelsToQuery.join(", ")}, cacheKey=${cacheKey}`,
   );
 
   try {
-    const responsesByModel = await Promise.all(
+    const answersByModel = await Promise.all(
       modelsToQuery.map(async (model) => ({
         model,
-        responses: await queryModelForPrompts(model, body.company, body.prompts),
+        answers: await queryModelForPrompts(model, body.company, body.prompts, analysisMode),
       })),
     );
 
     const modelAnalyses = await Promise.all(
-      responsesByModel.map(({ model, responses }) =>
-        analyzeModelResponses(model, body.company, body.prompts, responses),
+      answersByModel.map(({ model, answers }) =>
+        analyzeModelResponses(model, body.company, body.prompts, answers, analysisMode),
       ),
     );
 
     const primary = modelAnalyses[0];
     const response: AnalysisResponse = {
+      analysisMode,
       models: modelAnalyses,
       aggregateStats: primary.aggregateStats,
       promptAnalyses: primary.promptAnalyses,

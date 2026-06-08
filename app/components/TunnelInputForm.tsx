@@ -3,7 +3,7 @@
 import { SignInButton, SignUpButton, useAuth } from "@clerk/nextjs";
 import { DEMO_COMPANY, getDemoAnalysisResponse } from "@/lib/demo-data";
 import { saveReport } from "@/lib/report-storage";
-import { CompanyInput, GeneratedPrompt, PromptGenerationResponse } from "@/types";
+import { AnalysisMode, CompanyInput, GeneratedPrompt, PromptGenerationResponse } from "@/types";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import posthog from "posthog-js";
@@ -48,12 +48,14 @@ const textareaClass =
   "min-h-24 w-full resize-y rounded-md border border-slate-300 bg-white px-3 py-2 text-sm leading-6 text-slate-950 shadow-sm placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100";
 
 const labelClass = "mb-2 block text-sm font-medium text-slate-700";
+const WEB_MODE_PROMPT_LIMIT = 15;
 
 export function TunnelInputForm() {
   const router = useRouter();
   const { isLoaded, isSignedIn } = useAuth();
   const [form, setForm] = useState<CompanyInput>(defaultState);
   const [prompts, setPrompts] = useState<GeneratedPrompt[]>([]);
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("standard");
   const [loadingStep, setLoadingStep] = useState<"idle" | "generating" | "analyzing">("idle");
   const [error, setError] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<ClearbitSuggestion[]>([]);
@@ -66,6 +68,8 @@ export function TunnelInputForm() {
   const loading = loadingStep !== "idle";
   const authPending = !isLoaded;
   const requiresSignIn = isLoaded && !isSignedIn;
+  const webModePromptLimitExceeded =
+    analysisMode === "web" && prompts.length > WEB_MODE_PROMPT_LIMIT;
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -162,17 +166,23 @@ export function TunnelInputForm() {
   };
 
   const onRunAnalysis = async () => {
+    if (webModePromptLimitExceeded) {
+      setError(`Web mode supports up to ${WEB_MODE_PROMPT_LIMIT} prompts. Remove a few prompts or switch to Standard mode.`);
+      return;
+    }
+
     setLoadingStep("analyzing");
     setError(null);
     posthog.capture("analysis_started", {
       company_name: form.companyName,
       num_prompts: prompts.length,
+      analysis_mode: analysisMode,
     });
     try {
       const response = await fetch("/api/analyze-prompts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ company: form, prompts }),
+        body: JSON.stringify({ company: form, prompts, analysisMode }),
       });
 
       if (!response.ok) {
@@ -191,6 +201,7 @@ export function TunnelInputForm() {
         success: true,
         company_name: form.companyName,
         num_models: analysis.models?.length ?? 1,
+        analysis_mode: analysisMode,
         visibility_score: analysis.aggregateStats?.visibilityScore,
       });
       const report = saveReport(form, analysis);
@@ -203,7 +214,11 @@ export function TunnelInputForm() {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Analysis failed. Try demo mode.";
-      posthog.capture("analysis_completed", { success: false, company_name: form.companyName });
+      posthog.capture("analysis_completed", {
+        success: false,
+        company_name: form.companyName,
+        analysis_mode: analysisMode,
+      });
       setError(message);
     } finally {
       setLoadingStep("idle");
@@ -407,6 +422,42 @@ export function TunnelInputForm() {
         </div>
 
         <div className="mt-6 flex flex-wrap gap-3 border-t border-slate-200 pt-5">
+          <div className="w-full rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-950">Analysis mode</p>
+                <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">
+                  Web mode lets AI models search the current web before answering. It can better reflect product-discovery questions where assistants use search, but it may take longer.
+                </p>
+              </div>
+              <div className="flex w-fit rounded-lg border border-slate-200 bg-white p-1 shadow-sm">
+                {(["standard", "web"] as AnalysisMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => {
+                      setAnalysisMode(mode);
+                      if (error?.startsWith("Web mode supports")) setError(null);
+                    }}
+                    className={`rounded-md px-3 py-1.5 text-sm font-semibold capitalize transition ${
+                      analysisMode === mode
+                        ? "bg-slate-950 text-white shadow-sm"
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                    disabled={loading}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {webModePromptLimitExceeded && (
+              <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                Web mode supports up to {WEB_MODE_PROMPT_LIMIT} prompts. You currently have {prompts.length}.
+              </p>
+            )}
+          </div>
+
           <button
             type="submit"
             className="inline-flex h-11 items-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
@@ -418,7 +469,7 @@ export function TunnelInputForm() {
           <button
             type="button"
             className="inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!prompts.length || loading || authPending || requiresSignIn}
+            disabled={!prompts.length || loading || authPending || requiresSignIn || webModePromptLimitExceeded}
             onClick={onRunAnalysis}
           >
             {loadingStep === "analyzing" && <Spinner />}
@@ -452,7 +503,7 @@ export function TunnelInputForm() {
 
         {loadingStep === "analyzing" && (
           <p className="mt-4 animate-pulse text-sm text-sky-700">
-            Asking AI {form.numberOfPrompts} questions about {form.companyName || "your company"}... this usually takes 15-30 seconds.
+            Asking AI {prompts.length || form.numberOfPrompts} questions about {form.companyName || "your company"}{analysisMode === "web" ? " with web search" : ""}... this usually takes 15-30 seconds.
           </p>
         )}
         {loadingStep === "generating" && (
