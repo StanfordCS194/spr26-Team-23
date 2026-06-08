@@ -2,42 +2,40 @@
 
 import { TunnelDashboard } from "@/components/TunnelDashboard";
 import { DEMO_COMPANY, getDemoAnalysisResponse } from "@/lib/demo-data";
+import { getLatestReportPayload, getSavedReport } from "@/lib/report-storage";
 import { AnalysisResponse, CompanyInput } from "@/types";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import posthog from "posthog-js";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 
 interface StoredTunnelData {
   company: CompanyInput;
   analysis: AnalysisResponse;
 }
 
-const STORAGE_KEY = "tunnel-latest-report";
-
-function readStoredPayload(): StoredTunnelData | null {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as StoredTunnelData;
-  } catch {
-    return null;
-  }
-}
-
-export default function DashboardPage() {
+function DashboardContent() {
+  const searchParams = useSearchParams();
+  const reportId = searchParams.get("reportId");
   const [hydrated, setHydrated] = useState(false);
   const [payload, setPayload] = useState<StoredTunnelData | null>(null);
+  const [missingReportId, setMissingReportId] = useState<string | null>(null);
 
   useEffect(() => {
-    const stored = readStoredPayload();
+    const report = reportId ? getSavedReport(reportId) : null;
+    const stored = report
+      ? { company: report.company, analysis: report.analysis }
+      : getLatestReportPayload();
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPayload(stored);
+    setMissingReportId(reportId && !report ? reportId : null);
     setHydrated(true);
     posthog.capture("dashboard_viewed", {
-      source: stored ? "stored" : "demo",
+      source: report ? "history" : stored ? "latest" : "demo",
       company_name: stored?.company?.companyName ?? "Wine Find",
+      report_id: report?.id,
     });
-  }, []);
+  }, [reportId]);
 
   if (!hydrated) {
     return <main className="min-h-screen" />;
@@ -49,7 +47,7 @@ export default function DashboardPage() {
       <>
         <TunnelDashboard company={DEMO_COMPANY} data={demo} />
         <div className="fixed bottom-4 left-4 right-4 z-10 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-lg shadow-slate-900/10 sm:left-auto sm:max-w-sm">
-          Showing demo report.{" "}
+          {missingReportId ? "That saved report could not be found. Showing demo report. " : "Showing demo report. "}
           <Link href="/" className="font-semibold text-slate-950 underline underline-offset-4">
             Run your own analysis
           </Link>
@@ -59,4 +57,12 @@ export default function DashboardPage() {
   }
 
   return <TunnelDashboard company={payload.company} data={payload.analysis} />;
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen" />}>
+      <DashboardContent />
+    </Suspense>
+  );
 }

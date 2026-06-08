@@ -2,6 +2,7 @@
 
 import { SignInButton, SignUpButton, useAuth } from "@clerk/nextjs";
 import { DEMO_COMPANY, getDemoAnalysisResponse } from "@/lib/demo-data";
+import { saveReport } from "@/lib/report-storage";
 import { CompanyInput, GeneratedPrompt, PromptGenerationResponse } from "@/types";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -192,11 +193,13 @@ export function TunnelInputForm() {
         num_models: analysis.models?.length ?? 1,
         visibility_score: analysis.aggregateStats?.visibilityScore,
       });
-      window.localStorage.setItem(
-        "tunnel-latest-report",
-        JSON.stringify({ company: form, analysis }),
-      );
-      router.push("/dashboard");
+      const report = saveReport(form, analysis);
+      posthog.capture("report_saved", {
+        report_id: report.id,
+        company_name: form.companyName,
+        visibility_score: analysis.aggregateStats?.visibilityScore,
+      });
+      router.push(`/dashboard?reportId=${encodeURIComponent(report.id)}`);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Analysis failed. Try demo mode.";
@@ -210,11 +213,8 @@ export function TunnelInputForm() {
   const onUseDemoData = () => {
     posthog.capture("demo_mode_used");
     const analysis = getDemoAnalysisResponse();
-    window.localStorage.setItem(
-      "tunnel-latest-report",
-      JSON.stringify({ company: DEMO_COMPANY, analysis }),
-    );
-    router.push("/dashboard");
+    const report = saveReport(DEMO_COMPANY, analysis);
+    router.push(`/dashboard?reportId=${encodeURIComponent(report.id)}`);
   };
 
   return (

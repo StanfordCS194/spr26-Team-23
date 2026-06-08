@@ -122,3 +122,10 @@ export interface AnalysisResponse {
   promptAnalyses: PromptAnalysis[];
   cache?: CacheMetadata;
 }
+
+export interface SavedReport {
+  id: string;
+  createdAt: string;
+  company: CompanyInput;
+  analysis: AnalysisResponse;
+}
