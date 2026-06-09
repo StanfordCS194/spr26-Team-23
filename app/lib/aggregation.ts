@@ -5,6 +5,9 @@ import {
   CompetitorStats,
   PromptAnalysis,
   PromptCategory,
+  Recommendation,
+  RecommendationEvidence,
+  RecommendationPriority,
 } from "@/types";
 
 const CATEGORIES: PromptCategory[] = [
@@ -22,6 +25,139 @@ const CATEGORY_LABEL: Record<PromptCategory, string> = {
   niche: "niche",
   purchase: "purchase intent",
 };
+
+const CATEGORY_PRIORITY: Record<PromptCategory, number> = {
+  purchase: 0,
+  comparison: 1,
+  use_case: 2,
+  discovery: 3,
+  niche: 4,
+};
+
+const PRIORITY_WEIGHT: Record<RecommendationPriority, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+};
+
+function compactText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function truncate(text: string, maxLength: number): string {
+  const t = compactText(text);
+  if (t.length <= maxLength) return t;
+  return `${t.slice(0, maxLength - 1).trimEnd()}...`;
+}
+
+function titleCase(text: string): string {
+  const smallWords = new Set(["a", "an", "and", "at", "for", "from", "in", "of", "or", "the", "to", "with"]);
+  return compactText(text)
+    .split(" ")
+    .map((word, index) => {
+      const lower = word.toLowerCase();
+      if (lower === "vs") return "vs";
+      if (index > 0 && smallWords.has(lower)) return lower;
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(" ");
+}
+
+function promptToTitleBase(prompt: string): string {
+  const withoutPunctuation = compactText(prompt).replace(/[?!.,;:]+$/g, "");
+  const normalized = withoutPunctuation
+    .replace(/^what are the best\s+/i, "Best ")
+    .replace(/^what is the best\s+/i, "Best ")
+    .replace(/^which\s+/i, "Which ")
+    .replace(/^how do i\s+/i, "How to ")
+    .replace(/^how can i\s+/i, "How to ")
+    .replace(/^is there an?\s+/i, "")
+    .replace(/^should i\s+/i, "Should You ");
+  return titleCase(normalized || prompt);
+}
+
+function contentTitleForPrompt(
+  company: CompanyInput,
+  prompt: string,
+  competitor?: string,
+): string {
+  if (competitor) {
+    return `${company.companyName} vs ${competitor}: Feature, Pricing, and Best-Fit Guide`;
+  }
+
+  return `${promptToTitleBase(prompt)}: Where ${company.companyName} Fits`;
+}
+
+function resultSummaryForPrompt(promptAnalysis: PromptAnalysis): string {
+  return (
+    truncate(
+      promptAnalysis.analysis.explanation ||
+        promptAnalysis.analysis.usefulQuote ||
+        promptAnalysis.response,
+      220,
+    ) || "No response summary was captured for this prompt."
+  );
+}
+
+function evidenceForPrompt(promptAnalysis: PromptAnalysis): RecommendationEvidence {
+  return {
+    promptId: promptAnalysis.promptId,
+    prompt: promptAnalysis.prompt,
+    category: promptAnalysis.category,
+    resultSummary: resultSummaryForPrompt(promptAnalysis),
+    competitorMentions: promptAnalysis.analysis.mentionedCompetitors,
+  };
+}
+
+function strongestCompetitorForPrompts(
+  prompts: PromptAnalysis[],
+  fallback: string | null = null,
+): string | null {
+  const counts = new Map<string, number>();
+  for (const prompt of prompts) {
+    for (const competitor of prompt.analysis.mentionedCompetitors) {
+      counts.set(competitor, (counts.get(competitor) || 0) + 1);
+    }
+  }
+
+  const strongest = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+
+  return strongest?.[0] || fallback;
+}
+
+function missedPromptAnalyses(promptAnalyses: PromptAnalysis[]): PromptAnalysis[] {
+  return promptAnalyses
+    .filter(
+      (p) =>
+        p.analysis.competitorWon ||
+        (!p.analysis.targetMentioned && p.analysis.mentionedCompetitors.length > 0),
+    )
+    .sort(
+      (a, b) =>
+        CATEGORY_PRIORITY[a.category] - CATEGORY_PRIORITY[b.category] ||
+        b.analysis.mentionedCompetitors.length - a.analysis.mentionedCompetitors.length,
+    );
+}
+
+function suggestedActionForPrompt(company: CompanyInput, promptAnalysis: PromptAnalysis): string {
+  const competitor = strongestCompetitorForPrompts(
+    [promptAnalysis],
+    promptAnalysis.analysis.mentionedCompetitors[0] || null,
+  );
+  const pageTitle = contentTitleForPrompt(
+    company,
+    promptAnalysis.prompt,
+    promptAnalysis.category === "comparison" ? competitor || undefined : undefined,
+  );
+
+  if (promptAnalysis.category === "comparison" && competitor) {
+    return `Publish "${pageTitle}" and answer the exact comparison with criteria, best-fit users, pricing context, and where ${company.companyName} is different from ${competitor}.`;
+  }
+
+  return `Publish "${pageTitle}" and use the prompt wording as an H2, then give a direct answer that names ${company.companyName} as a relevant option.`;
+}
 
 function buildPositioningSummary(
   company: CompanyInput,
@@ -71,15 +207,40 @@ interface BaseStats {
   possibleInaccuracies: AggregateStats["possibleInaccuracies"];
 }
 
-function buildRecommendations(company: CompanyInput, base: BaseStats): string[] {
-  const recs: string[] = [];
+function buildRecommendations(
+  company: CompanyInput,
+  base: BaseStats,
+  promptAnalyses: PromptAnalysis[],
+): Recommendation[] {
+  const recs: Recommendation[] = [];
   const targetName = company.companyName;
   const cat = base.visibilityByCategory;
+  const missed = missedPromptAnalyses(promptAnalyses);
+  const byPromptId = new Map(promptAnalyses.map((p) => [p.promptId, p]));
+  const targetMissing = (category: PromptCategory) =>
+    missed.filter((p) => p.category === category);
+  const targetMentioned = (category: PromptCategory) =>
+    promptAnalyses.filter((p) => p.category === category && p.analysis.targetMentioned);
+  const promptEvidence = (items: PromptAnalysis[]) => items.slice(0, 3).map(evidenceForPrompt);
+  const addRecommendation = (recommendation: Recommendation) => {
+    if (recommendation.supportingPrompts.length > 0) {
+      recs.push(recommendation);
+    }
+  };
 
   if (cat.discovery.total > 0 && cat.discovery.percent < 35) {
-    recs.push(
-      `Create content around broad discovery terms in ${company.category} (e.g. "best ${company.category}") so ${targetName} starts surfacing in top-level recommendations.`,
-    );
+    const support = targetMissing("discovery");
+    const primary = support[0];
+    if (primary) {
+      addRecommendation({
+        id: "discovery-gap",
+        title: "Win broad discovery prompts",
+        priority: cat.discovery.percent === 0 ? "critical" : "high",
+        action: `Start with "${contentTitleForPrompt(company, primary.prompt)}" so ${targetName} is present when assistants answer broad discovery questions.`,
+        contentIdeas: support.slice(0, 3).map((p) => contentTitleForPrompt(company, p.prompt)),
+        supportingPrompts: promptEvidence(support),
+      });
+    }
   }
 
   if (
@@ -87,48 +248,136 @@ function buildRecommendations(company: CompanyInput, base: BaseStats): string[] 
     cat.comparison.percent < 50 &&
     (company.competitors || []).length > 0
   ) {
-    const top = base.topCompetitor?.name || (company.competitors || [])[0];
-    if (top) {
-      recs.push(
-        `Build dedicated comparison pages such as "${targetName} vs ${top}" — comparison prompts repeatedly cite alternatives.`,
-      );
+    const comparisonPrompts = promptAnalyses.filter((p) => p.category === "comparison");
+    const comparisonMisses = targetMissing("comparison");
+    const strongestComparisonCompetitor = strongestCompetitorForPrompts(
+      comparisonPrompts,
+      base.topCompetitor?.name || (company.competitors || [])[0] || null,
+    );
+
+    if (strongestComparisonCompetitor) {
+      const support = comparisonMisses.length > 0 ? comparisonMisses : comparisonPrompts;
+      addRecommendation({
+        id: "comparison-gap",
+        title: `Create the ${strongestComparisonCompetitor} comparison page`,
+        priority: cat.comparison.percent === 0 ? "critical" : "high",
+        action: `Publish "${contentTitleForPrompt(company, "", strongestComparisonCompetitor)}" because ${strongestComparisonCompetitor} is the strongest competitor in comparison prompts.`,
+        contentIdeas: [
+          `${targetName} vs ${strongestComparisonCompetitor}: Feature, Pricing, and Best-Fit Guide`,
+          `Alternatives to ${strongestComparisonCompetitor}: Where ${targetName} Fits`,
+          `${strongestComparisonCompetitor} vs ${targetName}: Which Users Should Choose Each`,
+        ],
+        supportingPrompts: promptEvidence(
+          support.filter((p) =>
+            p.analysis.mentionedCompetitors.includes(strongestComparisonCompetitor),
+          ).length > 0
+            ? support.filter((p) =>
+                p.analysis.mentionedCompetitors.includes(strongestComparisonCompetitor),
+              )
+            : support,
+        ),
+      });
     }
   }
 
   if (cat.niche.percent >= 50) {
-    recs.push(
-      `Niche queries are working well for ${targetName}. Double down on niche positioning copy and keep producing differentiated content there.`,
-    );
+    const support = targetMentioned("niche");
+    const primary = support[0];
+    if (primary) {
+      addRecommendation({
+        id: "niche-strength",
+        title: "Expand the niche pages that already work",
+        priority: "low",
+        action: `Use "${contentTitleForPrompt(company, primary.prompt)}" as a template for more focused pages that repeat the niche positioning assistants already understand.`,
+        contentIdeas: support.slice(0, 3).map((p) => contentTitleForPrompt(company, p.prompt)),
+        supportingPrompts: promptEvidence(support),
+      });
+    }
   }
 
   if (base.topMissedOpportunities.length > 0) {
-    recs.push(
-      `Address ${base.topMissedOpportunities.length} missed-opportunity prompts where competitors appear and ${targetName} is missing — these are high-leverage content opportunities.`,
-    );
+    const support = base.topMissedOpportunities
+      .map((m) => byPromptId.get(m.promptId))
+      .filter((p): p is PromptAnalysis => Boolean(p));
+    const primary = base.topMissedOpportunities[0];
+    if (primary) {
+      addRecommendation({
+        id: "missed-opportunities",
+        title: "Answer the highest-leverage missed prompts",
+        priority: base.topMissedOpportunities.length >= 5 ? "critical" : "high",
+        action: `Create content for "${primary.prompt}" first; competitors are present in the result and ${targetName} is missing.`,
+        contentIdeas: base.topMissedOpportunities
+          .slice(0, 3)
+          .map((m) => m.suggestedPageTitle),
+        supportingPrompts: promptEvidence(support),
+      });
+    }
   }
 
   if (base.possibleInaccuracies.length > 0) {
-    recs.push(
-      `Possible inaccuracies were flagged in AI responses. Update public website copy and FAQs so models pick up the correct information.`,
-    );
+    const support = base.possibleInaccuracies
+      .map((entry) => byPromptId.get(entry.promptId))
+      .filter((p): p is PromptAnalysis => Boolean(p));
+    const first = base.possibleInaccuracies[0];
+    addRecommendation({
+      id: "accuracy-clarifications",
+      title: "Clarify facts assistants may be getting wrong",
+      priority: base.possibleInaccuracies.length >= 3 ? "high" : "medium",
+      action: `Add or update FAQ copy for "${first.prompt}" and explicitly state the correct facts flagged in the analysis.`,
+      contentIdeas: base.possibleInaccuracies.slice(0, 3).map((entry) => {
+        const topic = promptToTitleBase(entry.prompt);
+        return `FAQ: ${topic}`;
+      }),
+      supportingPrompts: promptEvidence(support),
+    });
   }
 
   if (
     base.shareOfVoice.target < 15 &&
     base.shareOfVoice.competitors.some((c) => c.share > base.shareOfVoice.target * 2)
   ) {
-    recs.push(
-      `Share of voice is low. Increase external mentions: guides, listicles, and category content that name ${targetName} alongside competitors.`,
-    );
+    const strongest = base.shareOfVoice.competitors
+      .slice()
+      .sort((a, b) => b.share - a.share || b.mentions - a.mentions)[0];
+    const support = strongest
+      ? promptAnalyses.filter((p) => p.analysis.mentionedCompetitors.includes(strongest.competitor))
+      : missed;
+
+    if (strongest) {
+      addRecommendation({
+        id: "share-of-voice",
+        title: `Close the share-of-voice gap with ${strongest.competitor}`,
+        priority: "high",
+        action: `Prioritize pages and third-party mentions that place ${targetName} beside ${strongest.competitor}; ${strongest.competitor} holds ${strongest.share}% share of voice in this audit.`,
+        contentIdeas: [
+          `Alternatives to ${strongest.competitor}: Where ${targetName} Fits`,
+          `${targetName} vs ${strongest.competitor}: Feature, Pricing, and Best-Fit Guide`,
+          `Why ${targetName} Should Be Included in Evaluation Shortlists`,
+        ],
+        supportingPrompts: promptEvidence(support),
+      });
+    }
   }
 
-  if (recs.length === 0) {
-    recs.push(
-      `Visibility looks healthy across categories. Keep producing differentiated content and monitor how AI describes ${targetName} over time.`,
-    );
+  if (recs.length === 0 && promptAnalyses.length > 0) {
+    const support = promptAnalyses
+      .filter((p) => p.analysis.targetMentioned)
+      .slice(0, 3);
+    addRecommendation({
+      id: "monitor-positioning",
+      title: "Keep reinforcing the pages that are working",
+      priority: "low",
+      action: `Visibility looks healthy across the tested categories. Refresh the pages behind the strongest prompts and monitor how assistants describe ${targetName} over time.`,
+      contentIdeas: support.map((p) => contentTitleForPrompt(company, p.prompt)),
+      supportingPrompts: promptEvidence(support),
+    });
   }
 
-  return recs;
+  return recs.sort(
+    (a, b) =>
+      PRIORITY_WEIGHT[a.priority] - PRIORITY_WEIGHT[b.priority] ||
+      a.title.localeCompare(b.title),
+  );
 }
 
 export function aggregateAnalyses(
@@ -197,7 +446,8 @@ export function aggregateAnalyses(
     .map((p) => ({
       promptId: p.promptId,
       prompt: p.prompt,
-      winningCompetitor: p.analysis.mentionedCompetitors[0] || "",
+      winningCompetitor:
+        strongestCompetitorForPrompts([p], p.analysis.mentionedCompetitors[0] || null) || "",
     }));
 
   const sortedCategories = [...CATEGORIES].sort(
@@ -212,14 +462,31 @@ export function aggregateAnalyses(
 
   const topMissedOpportunities = promptAnalyses
     .filter((p) => p.analysis.competitorWon)
+    .sort(
+      (a, b) =>
+        CATEGORY_PRIORITY[a.category] - CATEGORY_PRIORITY[b.category] ||
+        b.analysis.mentionedCompetitors.length - a.analysis.mentionedCompetitors.length,
+    )
     .slice(0, 8)
-    .map((p) => ({
-      promptId: p.promptId,
-      prompt: p.prompt,
-      category: p.category,
-      competitorMentions: p.analysis.mentionedCompetitors,
-      explanation: p.analysis.explanation,
-    }));
+    .map((p) => {
+      const strongestCompetitor =
+        strongestCompetitorForPrompts([p], p.analysis.mentionedCompetitors[0] || null) || "";
+      return {
+        promptId: p.promptId,
+        prompt: p.prompt,
+        category: p.category,
+        competitorMentions: p.analysis.mentionedCompetitors,
+        explanation: p.analysis.explanation,
+        resultSummary: resultSummaryForPrompt(p),
+        suggestedPageTitle: contentTitleForPrompt(
+          company,
+          p.prompt,
+          p.category === "comparison" ? strongestCompetitor || undefined : undefined,
+        ),
+        suggestedAction: suggestedActionForPrompt(company, p),
+        strongestCompetitor,
+      };
+    });
 
   const possibleInaccuracies = promptAnalyses
     .filter((p) => p.analysis.possibleInaccuracies.length > 0)
@@ -242,7 +509,7 @@ export function aggregateAnalyses(
     promptAnalyses,
     visibilityByCategory,
   );
-  const recommendations = buildRecommendations(company, baseStats);
+  const recommendations = buildRecommendations(company, baseStats, promptAnalyses);
 
   return {
     visibilityScore,

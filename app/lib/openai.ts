@@ -28,14 +28,28 @@ export function getOpenAIClient(): OpenAI {
   return client;
 }
 
-export async function queryGPT4oWithPrompt(prompt: string): Promise<string> {
+interface ProviderRequestOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+export async function queryGPT4oWithPrompt(
+  prompt: string,
+  options: ProviderRequestOptions = {},
+): Promise<string> {
   const openai = getOpenAIClient();
-  const response = await openai.responses.create({
-    model: GPT4O_MODEL,
-    input: prompt,
-    max_output_tokens: 300,
-    temperature: 0.7,
-    store: false,
-  });
+  const response = await openai.responses.create(
+    {
+      model: GPT4O_MODEL,
+      input: prompt,
+      max_output_tokens: 300,
+      temperature: 0.7,
+      store: false,
+    },
+    {
+      ...(options.timeoutMs ? { timeout: options.timeoutMs } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+    },
+  );
   return response.output_text ?? "";
 }

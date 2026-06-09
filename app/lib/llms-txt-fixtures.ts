@@ -29,11 +29,36 @@ export function minimalAnalysisFixture(): AnalysisResponse {
           category: "discovery",
           competitorMentions: ["RivalCo"],
           explanation: "Target not listed",
+          resultSummary: "Target not listed",
+          suggestedPageTitle: "Best Tools for Widgets: Where Acme Widgets Fits",
+          suggestedAction:
+            'Publish "Best Tools for Widgets: Where Acme Widgets Fits" and use the prompt wording as an H2, then give a direct answer that names Acme Widgets as a relevant option.',
+          strongestCompetitor: "RivalCo",
         },
       ],
       possibleInaccuracies: [],
       aiPositioningSummary: "Acme is mentioned occasionally in widget discussions.",
-      recommendations: ["Add a comparison page"],
+      recommendations: [
+        {
+          id: "comparison-gap",
+          title: "Create the RivalCo comparison page",
+          priority: "high",
+          action:
+            'Publish "Acme Widgets vs RivalCo: Feature, Pricing, and Best-Fit Guide" because RivalCo is the strongest competitor in comparison prompts.',
+          contentIdeas: [
+            "Acme Widgets vs RivalCo: Feature, Pricing, and Best-Fit Guide",
+          ],
+          supportingPrompts: [
+            {
+              promptId: "p1",
+              prompt: "best tools for widgets",
+              category: "discovery",
+              resultSummary: "Target not listed",
+              competitorMentions: ["RivalCo"],
+            },
+          ],
+        },
+      ],
     },
     promptAnalyses: [],
   };

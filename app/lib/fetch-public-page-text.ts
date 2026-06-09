@@ -55,6 +55,48 @@ export function stripScriptsAndStyles(html: string): string {
     .replace(/<noscript[\s\S]*?<\/noscript>/gi, "");
 }
 
+export interface PageMetaFromHtml {
+  title?: string;
+  description?: string;
+}
+
+function readMetaContent(html: string, pattern: RegExp): string | undefined {
+  const m = pattern.exec(html);
+  if (!m?.[1]) return undefined;
+  return m[1].replace(/\s+/g, " ").trim() || undefined;
+}
+
+/** Best-effort title and description from homepage HTML. */
+export function extractPageMetaFromHtml(html: string): PageMetaFromHtml {
+  const title =
+    readMetaContent(html, /<title[^>]*>([\s\S]*?)<\/title>/i) ??
+    readMetaContent(html, /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i) ??
+    readMetaContent(html, /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i);
+
+  const description =
+    readMetaContent(
+      html,
+      /<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i,
+    ) ??
+    readMetaContent(
+      html,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i,
+    ) ??
+    readMetaContent(
+      html,
+      /<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i,
+    ) ??
+    readMetaContent(
+      html,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:description["']/i,
+    );
+
+  return {
+    ...(title ? { title } : {}),
+    ...(description ? { description } : {}),
+  };
+}
+
 export function htmlToPlainText(html: string, maxChars: number): string {
   const stripped = stripScriptsAndStyles(html)
     .replace(/<[^>]+>/g, " ")

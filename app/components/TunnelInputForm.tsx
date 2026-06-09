@@ -11,7 +11,7 @@ import {
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import posthog from "posthog-js";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useId, useRef, useState } from "react";
 import { PromptGenerationPreview } from "./PromptGenerationPreview";
 
 interface ClearbitSuggestion {
@@ -56,25 +56,48 @@ const labelClass = "mb-2 block text-sm font-medium text-slate-700";
 export function TunnelInputForm() {
   const router = useRouter();
   const { isLoaded, isSignedIn } = useAuth();
+  const companyListboxId = useId();
   const [form, setForm] = useState<CompanyInput>(defaultState);
   const [prompts, setPrompts] = useState<GeneratedPrompt[]>([]);
   const [loadingStep, setLoadingStep] = useState<"idle" | "generating" | "analyzing">("idle");
   const [error, setError] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<ClearbitSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [companyInputFocused, setCompanyInputFocused] = useState(false);
+  const [companyInputTouched, setCompanyInputTouched] = useState(false);
+  const [autocompleteStatus, setAutocompleteStatus] = useState<"idle" | "loading" | "loaded">(
+    "idle",
+  );
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const suppressFetchRef = useRef(false);
+  const dismissedAutocompleteQueryRef = useRef<string | null>(null);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
 
   const loading = loadingStep !== "idle";
   const authPending = !isLoaded;
   const requiresSignIn = isLoaded && !isSignedIn;
+  const companyQuery = form.companyName.trim();
+  const canShowAutocomplete =
+    companyInputFocused && companyInputTouched && companyQuery.length >= 2;
+  const autocompleteOpen =
+    showSuggestions &&
+    canShowAutocomplete &&
+    (autocompleteStatus === "loading" ||
+      autocompleteStatus === "loaded" ||
+      suggestions.length > 0);
+  const activeSuggestionId =
+    autocompleteOpen && activeSuggestionIndex >= 0 && suggestions[activeSuggestionIndex]
+      ? `${companyListboxId}-option-${activeSuggestionIndex}`
+      : undefined;
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setCompanyInputFocused(false);
         setShowSuggestions(false);
+        setActiveSuggestionIndex(-1);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -87,32 +110,57 @@ export function TunnelInputForm() {
       return;
     }
     const query = form.companyName.trim();
-    if (query.length < 2) {
+    if (!companyInputFocused || !companyInputTouched || query.length < 2) {
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
       return;
     }
+
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
+      abortControllerRef.current?.abort();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
       try {
         const res = await fetch(
           `https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(query)}`,
+          { signal: controller.signal },
         );
         if (res.ok) {
           const data = (await res.json()) as ClearbitSuggestion[];
+          if (controller.signal.aborted) return;
           setSuggestions(data);
-          setShowSuggestions(data.length > 0);
+          setAutocompleteStatus("loaded");
+          setShowSuggestions(dismissedAutocompleteQueryRef.current !== query);
+          setActiveSuggestionIndex(-1);
+        } else if (!controller.signal.aborted) {
+          setSuggestions([]);
+          setAutocompleteStatus("loaded");
+          setShowSuggestions(dismissedAutocompleteQueryRef.current !== query);
           setActiveSuggestionIndex(-1);
         }
-      } catch {
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return;
         // autocomplete is non-critical, fail silently
+        setSuggestions([]);
+        setShowSuggestions(false);
+        setAutocompleteStatus("idle");
+      } finally {
+        if (abortControllerRef.current === controller) {
+          abortControllerRef.current = null;
+        }
       }
     }, 300);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
     };
-  }, [form.companyName]);
+  }, [companyInputFocused, companyInputTouched, form.companyName]);
 
   const onSelectSuggestion = (suggestion: ClearbitSuggestion) => {
     suppressFetchRef.current = true;
+    dismissedAutocompleteQueryRef.current = null;
     setForm((prev) => ({
       ...prev,
       companyName: suggestion.name,
@@ -121,6 +169,7 @@ export function TunnelInputForm() {
     }));
     setSuggestions([]);
     setShowSuggestions(false);
+    setAutocompleteStatus("idle");
     setActiveSuggestionIndex(-1);
   };
 
@@ -268,27 +317,79 @@ export function TunnelInputForm() {
                 className={inputClass}
                 placeholder="e.g. Wine Find"
                 value={form.companyName}
+                role="combobox"
+                aria-autocomplete="list"
+                aria-haspopup="listbox"
+                aria-controls={companyListboxId}
+                aria-expanded={autocompleteOpen}
+                aria-activedescendant={activeSuggestionId}
                 onChange={(e) => {
                   const value = e.target.value;
+                  dismissedAutocompleteQueryRef.current = null;
+                  setCompanyInputTouched(true);
                   update("companyName", value);
                   if (value.trim().length < 2) {
                     setSuggestions([]);
                     setShowSuggestions(false);
+                    setAutocompleteStatus("idle");
+                    setActiveSuggestionIndex(-1);
+                  } else {
+                    setShowSuggestions(true);
+                    setAutocompleteStatus("loading");
                     setActiveSuggestionIndex(-1);
                   }
                 }}
-                onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
+                onFocus={() => {
+                  dismissedAutocompleteQueryRef.current = null;
+                  setCompanyInputFocused(true);
+                  setCompanyInputTouched(true);
+                  if (form.companyName.trim().length >= 2) {
+                    setShowSuggestions(true);
+                    setAutocompleteStatus("loading");
+                    setActiveSuggestionIndex(-1);
+                  }
+                }}
+                onBlur={() => {
+                  setCompanyInputFocused(false);
+                  setShowSuggestions(false);
+                  setAutocompleteStatus("idle");
+                  setActiveSuggestionIndex(-1);
+                }}
                 onKeyDown={(e) => {
-                  if (!showSuggestions) return;
                   if (e.key === "Escape") {
+                    dismissedAutocompleteQueryRef.current = companyQuery;
                     setShowSuggestions(false);
-                  } else if (e.key === "ArrowDown") {
+                    setActiveSuggestionIndex(-1);
+                    return;
+                  }
+                  if (e.key === "Tab") {
+                    dismissedAutocompleteQueryRef.current = companyQuery;
+                    setShowSuggestions(false);
+                    setActiveSuggestionIndex(-1);
+                    return;
+                  }
+                  if (e.key === "ArrowDown") {
                     e.preventDefault();
-                    setActiveSuggestionIndex((i) => Math.min(i + 1, suggestions.length - 1));
+                    dismissedAutocompleteQueryRef.current = null;
+                    if (!autocompleteOpen) setShowSuggestions(true);
+                    if (!suggestions.length) return;
+                    setActiveSuggestionIndex((i) =>
+                      i >= suggestions.length - 1 ? 0 : i + 1,
+                    );
                   } else if (e.key === "ArrowUp") {
                     e.preventDefault();
-                    setActiveSuggestionIndex((i) => Math.max(i - 1, 0));
-                  } else if (e.key === "Enter" && activeSuggestionIndex >= 0) {
+                    dismissedAutocompleteQueryRef.current = null;
+                    if (!autocompleteOpen) setShowSuggestions(true);
+                    if (!suggestions.length) return;
+                    setActiveSuggestionIndex((i) =>
+                      i <= 0 ? suggestions.length - 1 : i - 1,
+                    );
+                  } else if (
+                    e.key === "Enter" &&
+                    autocompleteOpen &&
+                    activeSuggestionIndex >= 0 &&
+                    suggestions[activeSuggestionIndex]
+                  ) {
                     e.preventDefault();
                     onSelectSuggestion(suggestions[activeSuggestionIndex]);
                   }
@@ -296,13 +397,34 @@ export function TunnelInputForm() {
                 autoComplete="off"
                 required
               />
-              {showSuggestions && (
-                <ul className="absolute left-0 right-0 top-full z-10 mt-1 max-h-60 overflow-y-auto rounded-md border border-slate-200 bg-white shadow-lg">
-                  {suggestions.map((s, i) => (
-                    <li key={s.domain}>
-                      <button
-                        type="button"
-                        className={`flex w-full cursor-pointer items-center gap-3 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 ${i === activeSuggestionIndex ? "bg-slate-50" : ""}`}
+              {autocompleteOpen && (
+                <ul
+                  id={companyListboxId}
+                  role="listbox"
+                  aria-label="Company suggestions"
+                  aria-busy={autocompleteStatus === "loading"}
+                  className="absolute left-0 right-0 top-full z-10 mt-1 max-h-60 overflow-y-auto rounded-md border border-slate-200 bg-white shadow-lg"
+                >
+                  {autocompleteStatus === "loading" ? (
+                    <li
+                      role="option"
+                      aria-disabled="true"
+                      aria-selected="false"
+                      className="flex items-center gap-2 px-3 py-2 text-sm text-slate-500"
+                    >
+                      <Spinner />
+                      Searching companies...
+                    </li>
+                  ) : suggestions.length ? (
+                    suggestions.map((s, i) => (
+                      <li
+                        id={`${companyListboxId}-option-${i}`}
+                        key={s.domain}
+                        role="option"
+                        aria-selected={i === activeSuggestionIndex}
+                        tabIndex={-1}
+                        className={`flex cursor-pointer items-center gap-3 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 ${i === activeSuggestionIndex ? "bg-slate-50" : ""}`}
+                        onMouseEnter={() => setActiveSuggestionIndex(i)}
                         onMouseDown={(e) => {
                           e.preventDefault();
                           onSelectSuggestion(s);
@@ -318,9 +440,18 @@ export function TunnelInputForm() {
                         />
                         <span className="font-medium">{s.name}</span>
                         <span className="ml-auto text-slate-400">{s.domain}</span>
-                      </button>
+                      </li>
+                    ))
+                  ) : (
+                    <li
+                      role="option"
+                      aria-disabled="true"
+                      aria-selected="false"
+                      className="px-3 py-2 text-sm text-slate-500"
+                    >
+                      No companies found
                     </li>
-                  ))}
+                  )}
                 </ul>
               )}
             </div>

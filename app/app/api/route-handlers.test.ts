@@ -90,7 +90,7 @@ function companyFixture(overrides: Partial<CompanyInput> = {}): CompanyInput {
     description: "Analytics for operations teams.",
     category: "analytics tools",
     competitors: ["Beta BI"],
-    numberOfPrompts: 3,
+    numberOfPrompts: 5,
     ...overrides,
   };
 }
@@ -113,6 +113,7 @@ const prompts: GeneratedPrompt[] = [
 beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
+  mocks.auth.mockResolvedValue({ userId: "user_test" });
   clearProviderEnv();
   delete (globalThis as typeof globalThis & { __tunnelCache?: unknown }).__tunnelCache;
 });
@@ -125,13 +126,14 @@ describe("POST /api/generate-prompts", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
-      error: "Missing required company fields.",
+      code: "invalid_request",
+      error: "Missing required company fields: companyName, category, and description.",
     });
   });
 
   it("uses deterministic fallback prompts and emits cache metadata when the Gemini key is missing", async () => {
     const { POST } = await import("@/app/api/generate-prompts/route");
-    const company = companyFixture({ numberOfPrompts: 3 });
+    const company = companyFixture();
 
     const firstResponse = await POST(jsonRequest("/api/generate-prompts", company));
     const firstBody = (await firstResponse.json()) as {
@@ -145,7 +147,7 @@ describe("POST /api/generate-prompts", () => {
     };
 
     expect(firstResponse.status).toBe(200);
-    expect(firstBody.prompts).toHaveLength(3);
+    expect(firstBody.prompts).toHaveLength(5);
     expect(firstBody.prompts[0]).toMatchObject({
       id: "p1",
       category: "discovery",
@@ -170,7 +172,8 @@ describe("POST /api/analyze-prompts", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
-      error: "Missing company or prompts.",
+      code: "invalid_request",
+      error: "prompts must be a non-empty array with at most 50 items.",
     });
   });
 

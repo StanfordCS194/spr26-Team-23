@@ -8,7 +8,7 @@ import {
   Sentiment,
 } from "@/types";
 
-const company: CompanyInput = {
+const acmeCompany: CompanyInput = {
   companyName: "Acme Analytics",
   website: "https://acme.example",
   description: "Analytics for operations teams.",
@@ -17,7 +17,17 @@ const company: CompanyInput = {
   numberOfPrompts: 5,
 };
 
-function analysisDetails(
+const wineCompany: CompanyInput = {
+  companyName: "Wine Find",
+  website: "winefind.ai",
+  description:
+    "Helps users compare restaurant and liquor store wine prices with market prices.",
+  category: "wine apps / restaurant wine decision tools",
+  competitors: ["Vivino", "CellarTracker", "Delectable"],
+  numberOfPrompts: 6,
+};
+
+function acmeAnalysisDetails(
   overrides: Partial<PromptAnalysisDetails> = {},
 ): PromptAnalysisDetails {
   const targetMentioned = overrides.targetMentioned ?? true;
@@ -28,9 +38,11 @@ function analysisDetails(
     targetMentioned,
     targetRank: targetMentioned ? 1 : null,
     mentionedCompetitors: [],
-    allMentionedCompanies: targetMentioned ? [company.companyName] : [],
+    allMentionedCompanies: targetMentioned ? [acmeCompany.companyName] : [],
     sentiment,
-    targetDescription: targetMentioned ? "Acme Analytics is described as useful." : "",
+    targetDescription: targetMentioned
+      ? "Acme Analytics is described as useful."
+      : "",
     possibleInaccuracies: [],
     competitorWon: false,
     explanation: targetMentioned
@@ -41,7 +53,7 @@ function analysisDetails(
   };
 }
 
-function promptAnalysis(
+function acmePromptAnalysis(
   id: string,
   category: PromptCategory,
   overrides: Partial<PromptAnalysisDetails> = {},
@@ -52,21 +64,60 @@ function promptAnalysis(
     category,
     rationale: `Rationale ${id}`,
     response: `Response ${id}`,
-    analysis: analysisDetails(overrides),
+    analysis: acmeAnalysisDetails(overrides),
+  };
+}
+
+function winePromptAnalysis(
+  id: string,
+  category: PromptCategory,
+  prompt: string,
+  mentionedCompetitors: string[],
+  targetMentioned = false,
+): PromptAnalysis {
+  const response = targetMentioned
+    ? "Wine Find is useful for this search."
+    : `${mentionedCompetitors.join(" and ")} are recommended for this search.`;
+  const analysis: PromptAnalysisDetails = {
+    targetMentioned,
+    targetRank: targetMentioned ? 1 : null,
+    mentionedCompetitors,
+    allMentionedCompanies: targetMentioned
+      ? [wineCompany.companyName, ...mentionedCompetitors]
+      : mentionedCompetitors,
+    sentiment: targetMentioned ? "positive" : "not_mentioned",
+    targetDescription: targetMentioned
+      ? "A tool for comparing wine prices at restaurants."
+      : "",
+    possibleInaccuracies: [],
+    competitorWon: !targetMentioned && mentionedCompetitors.length > 0,
+    explanation: targetMentioned
+      ? "Wine Find appears in the answer."
+      : `Wine Find is absent while ${mentionedCompetitors.join(" and ")} are discussed.`,
+    usefulQuote: response,
+  };
+
+  return {
+    promptId: id,
+    prompt,
+    category,
+    rationale: "Test prompt",
+    response,
+    analysis,
   };
 }
 
 describe("aggregateAnalyses", () => {
   it("computes visibility, rank, competitor, and opportunity metrics", () => {
-    const stats = aggregateAnalyses(company, [
-      promptAnalysis("p1", "discovery", {
+    const stats = aggregateAnalyses(acmeCompany, [
+      acmePromptAnalysis("p1", "discovery", {
         targetRank: 1,
         sentiment: "positive",
         mentionedCompetitors: ["Beta BI"],
         allMentionedCompanies: ["Acme Analytics", "Beta BI"],
         targetDescription: "Acme Analytics is excellent for operations teams.",
       }),
-      promptAnalysis("p2", "comparison", {
+      acmePromptAnalysis("p2", "comparison", {
         targetMentioned: false,
         targetRank: null,
         sentiment: "not_mentioned",
@@ -75,18 +126,18 @@ describe("aggregateAnalyses", () => {
         competitorWon: true,
         explanation: "Beta BI appears while Acme Analytics is missing.",
       }),
-      promptAnalysis("p3", "use_case", {
+      acmePromptAnalysis("p3", "use_case", {
         targetRank: 2,
         mentionedCompetitors: ["Gamma Metrics"],
         allMentionedCompanies: ["Gamma Metrics", "Acme Analytics"],
         targetDescription: "Acme Analytics handles operational reporting.",
       }),
-      promptAnalysis("p4", "niche", {
+      acmePromptAnalysis("p4", "niche", {
         targetRank: 1,
         targetDescription: "Acme Analytics helps niche operations teams.",
         possibleInaccuracies: ["Claims an unsupported pricing model."],
       }),
-      promptAnalysis("p5", "purchase", {
+      acmePromptAnalysis("p5", "purchase", {
         targetMentioned: false,
         targetRank: null,
         sentiment: "not_mentioned",
@@ -112,15 +163,18 @@ describe("aggregateAnalyses", () => {
       { competitor: "Gamma Metrics", mentions: 1, share: 17 },
     ]);
     expect(stats.topCompetitor).toEqual({ name: "Beta BI", mentions: 2 });
-    expect(stats.topMissedOpportunities).toEqual([
-      {
-        promptId: "p2",
-        prompt: "Prompt p2",
-        category: "comparison",
-        competitorMentions: ["Beta BI"],
-        explanation: "Beta BI appears while Acme Analytics is missing.",
-      },
-    ]);
+    expect(stats.topMissedOpportunities).toHaveLength(1);
+    expect(stats.topMissedOpportunities[0]).toMatchObject({
+      promptId: "p2",
+      prompt: "Prompt p2",
+      category: "comparison",
+      competitorMentions: ["Beta BI"],
+      explanation: "Beta BI appears while Acme Analytics is missing.",
+      strongestCompetitor: "Beta BI",
+    });
+    expect(stats.topMissedOpportunities[0].suggestedPageTitle).toBe(
+      "Acme Analytics vs Beta BI: Feature, Pricing, and Best-Fit Guide",
+    );
     expect(stats.possibleInaccuracies).toEqual([
       {
         promptId: "p4",
@@ -131,13 +185,8 @@ describe("aggregateAnalyses", () => {
   });
 
   it("recommends actions from weak categories, missed opportunities, and inaccuracies", () => {
-    const stats = aggregateAnalyses(company, [
-      promptAnalysis("p1", "discovery", {
-        targetMentioned: false,
-        targetRank: null,
-        sentiment: "not_mentioned",
-      }),
-      promptAnalysis("p2", "comparison", {
+    const stats = aggregateAnalyses(acmeCompany, [
+      acmePromptAnalysis("p1", "discovery", {
         targetMentioned: false,
         targetRank: null,
         sentiment: "not_mentioned",
@@ -146,20 +195,128 @@ describe("aggregateAnalyses", () => {
         competitorWon: true,
         explanation: "Beta BI appears while Acme Analytics is missing.",
       }),
-      promptAnalysis("p3", "niche", {
+      acmePromptAnalysis("p2", "comparison", {
+        targetMentioned: false,
+        targetRank: null,
+        sentiment: "not_mentioned",
+        mentionedCompetitors: ["Beta BI"],
+        allMentionedCompanies: ["Beta BI"],
+        competitorWon: true,
+        explanation: "Beta BI appears while Acme Analytics is missing.",
+      }),
+      acmePromptAnalysis("p3", "niche", {
         targetRank: 1,
         possibleInaccuracies: ["Mentions an unsupported integration."],
       }),
     ]);
 
-    expect(stats.recommendations).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("Create content around broad discovery terms"),
-        expect.stringContaining('"Acme Analytics vs Beta BI"'),
-        expect.stringContaining("Niche queries are working well"),
-        expect.stringContaining("1 missed-opportunity prompts"),
-        expect.stringContaining("Possible inaccuracies were flagged"),
+    expect(stats.recommendations.every((r) => r.supportingPrompts.length > 0)).toBe(
+      true,
+    );
+
+    const recommendationsById = new Map(
+      stats.recommendations.map((recommendation) => [
+        recommendation.id,
+        recommendation,
       ]),
+    );
+
+    expect(recommendationsById.get("discovery-gap")).toMatchObject({
+      title: "Win broad discovery prompts",
+      priority: "critical",
+    });
+    expect(recommendationsById.get("discovery-gap")?.action).toContain(
+      "Prompt P1: Where Acme Analytics Fits",
+    );
+    expect(recommendationsById.get("comparison-gap")?.action).toContain(
+      "Beta BI",
+    );
+    expect(recommendationsById.get("niche-strength")?.action).toContain(
+      "Acme Analytics",
+    );
+    expect(recommendationsById.get("missed-opportunities")?.contentIdeas).toContain(
+      "Acme Analytics vs Beta BI: Feature, Pricing, and Best-Fit Guide",
+    );
+    expect(recommendationsById.get("accuracy-clarifications")?.contentIdeas).toContain(
+      "FAQ: Prompt P3",
+    );
+  });
+});
+
+describe("aggregateAnalyses recommendations", () => {
+  it("builds evidence-backed recommendations with concrete page titles", () => {
+    const stats = aggregateAnalyses(wineCompany, [
+      winePromptAnalysis("d1", "discovery", "What are the best wine apps in 2026?", [
+        "Vivino",
+      ]),
+      winePromptAnalysis("d2", "discovery", "Best apps for wine lovers", [
+        "Vivino",
+      ]),
+      winePromptAnalysis("d3", "discovery", "Which wine app should I download first?", [
+        "Vivino",
+      ]),
+      winePromptAnalysis("c1", "comparison", "Wine Find vs CellarTracker", [
+        "CellarTracker",
+      ]),
+      winePromptAnalysis("c2", "comparison", "Alternatives to CellarTracker", [
+        "CellarTracker",
+      ]),
+      winePromptAnalysis("c3", "comparison", "Vivino vs CellarTracker", [
+        "Vivino",
+        "CellarTracker",
+      ]),
+      winePromptAnalysis(
+        "n1",
+        "niche",
+        "Tools to compare restaurant wine prices to retail",
+        [],
+        true,
+      ),
+    ]);
+
+    expect(stats.topCompetitor?.name).toBe("Vivino");
+    expect(stats.recommendations.length).toBeGreaterThan(0);
+    expect(stats.recommendations.every((r) => r.supportingPrompts.length > 0)).toBe(
+      true,
+    );
+    expect(stats.recommendations.every((r) => r.priority)).toBe(true);
+
+    const comparisonRecommendation = stats.recommendations.find(
+      (r) => r.id === "comparison-gap",
+    );
+    expect(comparisonRecommendation?.title).toContain("CellarTracker");
+    expect(comparisonRecommendation?.action).toContain("CellarTracker");
+    expect(comparisonRecommendation?.contentIdeas[0]).toContain(
+      "Wine Find vs CellarTracker",
+    );
+    expect(
+      comparisonRecommendation?.supportingPrompts.every((p) =>
+        p.competitorMentions.includes("CellarTracker"),
+      ),
+    ).toBe(true);
+
+    const serialized = JSON.stringify(stats.recommendations);
+    expect(serialized).not.toContain("best wine apps / restaurant wine decision tools");
+  });
+
+  it("adds concrete next actions to missed opportunities", () => {
+    const stats = aggregateAnalyses(wineCompany, [
+      winePromptAnalysis("c1", "comparison", "Alternatives to CellarTracker", [
+        "CellarTracker",
+      ]),
+    ]);
+
+    expect(stats.topMissedOpportunities[0]).toMatchObject({
+      promptId: "c1",
+      strongestCompetitor: "CellarTracker",
+      suggestedPageTitle:
+        "Wine Find vs CellarTracker: Feature, Pricing, and Best-Fit Guide",
+    });
+    expect(stats.topMissedOpportunities[0].suggestedAction).toContain(
+      "answer the exact comparison",
+    );
+    expect(stats.topMissedOpportunities[0].resultSummary).toContain(
+      "Wine Find is absent",
     );
   });
 });
