@@ -1,4 +1,9 @@
 import {
+  authorizeApiRequest,
+  invalidRequestResponse,
+  mergeHeaders,
+} from "@/lib/api-security";
+import {
   cacheHeaders,
   createPromptGenerationCacheKey,
   readCache,
@@ -125,18 +130,49 @@ async function readJson<T>(request: Request): Promise<T | null> {
   }
 }
 
-function jsonResponse(prompts: GeneratedPrompt[], metadata: PromptGenerationResponse["cache"]) {
+function jsonResponse(
+  prompts: GeneratedPrompt[],
+  metadata: PromptGenerationResponse["cache"],
+  headers?: HeadersInit,
+) {
   const body: PromptGenerationResponse = { prompts, cache: metadata };
-  return NextResponse.json(body, { headers: cacheHeaders(metadata) });
+  return NextResponse.json(body, { headers: mergeHeaders(cacheHeaders(metadata), headers) });
 }
 
 export async function POST(request: Request) {
+  const authResult = await authorizeApiRequest(request, "generate-prompts");
+  if (!authResult.ok) return authResult.response;
+
   const input = await readJson<CompanyInput>(request);
 
-  if (!input?.companyName || !input?.category || !input?.description) {
-    return NextResponse.json(
-      { error: "Missing required company fields." },
-      { status: 400 },
+  if (!input) {
+    return invalidRequestResponse(
+      request,
+      "generate-prompts",
+      "Invalid JSON body.",
+      authResult.rateLimitHeaders,
+    );
+  }
+
+  if (!input.companyName || !input.category || !input.description) {
+    return invalidRequestResponse(
+      request,
+      "generate-prompts",
+      "Missing required company fields: companyName, category, and description.",
+      authResult.rateLimitHeaders,
+    );
+  }
+
+  if (
+    !Number.isInteger(input.numberOfPrompts) ||
+    input.numberOfPrompts < 5 ||
+    input.numberOfPrompts > 50
+  ) {
+    return invalidRequestResponse(
+      request,
+      "generate-prompts",
+      "numberOfPrompts must be an integer between 5 and 50.",
+      authResult.rateLimitHeaders,
     );
   }
 
@@ -147,7 +183,7 @@ export async function POST(request: Request) {
     console.info(
       `[generate-prompts] cache hit key=${cached.metadata.key} version=${cached.metadata.version}`,
     );
-    return jsonResponse(cached.value, cached.metadata);
+    return jsonResponse(cached.value, cached.metadata, authResult.rateLimitHeaders);
   }
 
   let prompts: GeneratedPrompt[];
@@ -204,5 +240,5 @@ export async function POST(request: Request) {
     `[generate-prompts] cache miss stored key=${metadata.key} version=${metadata.version} prompts=${prompts.length}`,
   );
 
-  return jsonResponse(prompts, metadata);
+  return jsonResponse(prompts, metadata, authResult.rateLimitHeaders);
 }

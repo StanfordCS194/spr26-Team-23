@@ -1,4 +1,9 @@
 import {
+  authorizeApiRequest,
+  invalidRequestResponse,
+  mergeHeaders,
+} from "@/lib/api-security";
+import {
   cacheHeaders,
   createAnalysisCacheKey,
   readCache,
@@ -28,6 +33,14 @@ interface AnalyzeBody {
   company: CompanyInput;
   prompts: GeneratedPrompt[];
 }
+
+const VALID_CATEGORIES = new Set<GeneratedPrompt["category"]>([
+  "discovery",
+  "comparison",
+  "use_case",
+  "niche",
+  "purchase",
+]);
 
 const ANSWER_SYSTEM_INSTRUCTION = `You are simulating a normal AI assistant answering real user product discovery questions.
 
@@ -305,19 +318,81 @@ async function readJson<T>(request: Request): Promise<T | null> {
   }
 }
 
-function jsonResponse(response: AnalysisResponse, metadata: NonNullable<AnalysisResponse["cache"]>) {
+function jsonResponse(
+  response: AnalysisResponse,
+  metadata: NonNullable<AnalysisResponse["cache"]>,
+  headers?: HeadersInit,
+) {
   return NextResponse.json(
     { ...response, cache: metadata },
-    { headers: cacheHeaders(metadata) },
+    { headers: mergeHeaders(cacheHeaders(metadata), headers) },
   );
 }
 
 export async function POST(request: Request) {
+  const authResult = await authorizeApiRequest(request, "analyze-prompts");
+  if (!authResult.ok) return authResult.response;
+
   const body = await readJson<AnalyzeBody>(request);
-  if (!body?.company || !body?.prompts?.length) {
-    return NextResponse.json(
-      { error: "Missing company or prompts." },
-      { status: 400 },
+
+  if (!body) {
+    return invalidRequestResponse(
+      request,
+      "analyze-prompts",
+      "Invalid JSON body.",
+      authResult.rateLimitHeaders,
+    );
+  }
+
+  if (!body.company) {
+    return invalidRequestResponse(
+      request,
+      "analyze-prompts",
+      "Missing company.",
+      authResult.rateLimitHeaders,
+    );
+  }
+
+  if (
+    !body.company.companyName ||
+    !body.company.category ||
+    !body.company.description ||
+    !Number.isInteger(body.company.numberOfPrompts) ||
+    body.company.numberOfPrompts < 5 ||
+    body.company.numberOfPrompts > 50
+  ) {
+    return invalidRequestResponse(
+      request,
+      "analyze-prompts",
+      "Company must include companyName, category, description, and numberOfPrompts between 5 and 50.",
+      authResult.rateLimitHeaders,
+    );
+  }
+
+  if (!Array.isArray(body.prompts) || body.prompts.length === 0 || body.prompts.length > 50) {
+    return invalidRequestResponse(
+      request,
+      "analyze-prompts",
+      "prompts must be a non-empty array with at most 50 items.",
+      authResult.rateLimitHeaders,
+    );
+  }
+
+  const hasInvalidPrompt = body.prompts.some(
+    (prompt) =>
+      !prompt ||
+      typeof prompt.id !== "string" ||
+      typeof prompt.prompt !== "string" ||
+      typeof prompt.rationale !== "string" ||
+      !VALID_CATEGORIES.has(prompt.category),
+  );
+
+  if (hasInvalidPrompt) {
+    return invalidRequestResponse(
+      request,
+      "analyze-prompts",
+      "Each prompt must include id, prompt, rationale, and a valid category.",
+      authResult.rateLimitHeaders,
     );
   }
 
@@ -343,7 +418,7 @@ export async function POST(request: Request) {
     console.info(
       `[analyze-prompts] cache hit key=${cached.metadata.key} version=${cached.metadata.version}`,
     );
-    return jsonResponse(cached.value, cached.metadata);
+    return jsonResponse(cached.value, cached.metadata, authResult.rateLimitHeaders);
   }
 
   console.log(
@@ -376,7 +451,7 @@ export async function POST(request: Request) {
       `[analyze-prompts] Completed. Models: ${modelAnalyses.map((m) => m.model).join(", ")}. cache miss stored key=${metadata.key} version=${metadata.version}`,
     );
 
-    return jsonResponse(response, metadata);
+    return jsonResponse(response, metadata, authResult.rateLimitHeaders);
   } catch (err) {
     console.error("[analyze-prompts] Unexpected error:", err);
     return NextResponse.json(
