@@ -31,6 +31,7 @@ interface GenerateLlmsTxtResponse {
   markdown?: string;
   model?: string;
   websiteFetch?: WebsiteFetchMeta;
+  pageMeta?: { title?: string; description?: string };
   existingLlmsTxt?: ExistingLlmsTxtMeta;
   usedFallback?: boolean;
   fallbackReason?: "missing_api_key" | "generation_failed";
@@ -42,6 +43,7 @@ interface CacheEntry {
   markdown: string;
   model: string;
   websiteFetch: WebsiteFetchMeta | null;
+  pageMeta: { title?: string; description?: string } | null;
   existingLlmsTxt: ExistingLlmsTxtMeta | null;
   fallbackNote: string | null;
 }
@@ -81,6 +83,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
   const [previewMode, setPreviewMode] = useState<"generated" | "template">("generated");
   const [modelLabel, setModelLabel] = useState<string | null>(null);
   const [websiteMeta, setWebsiteMeta] = useState<WebsiteFetchMeta | null>(null);
+  const [pageMeta, setPageMeta] = useState<{ title?: string; description?: string } | null>(null);
   const [existingLlmsMeta, setExistingLlmsMeta] = useState<ExistingLlmsTxtMeta | null>(null);
   const [fallbackNote, setFallbackNote] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -114,6 +117,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
       setPreviewMode("template");
       setModelLabel("Offline template (no LLM)");
       setWebsiteMeta(null);
+      setPageMeta(null);
       setExistingLlmsMeta(null);
       setFallbackNote(note);
       setStatus("ready");
@@ -131,6 +135,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
       setPreviewMode("generated");
       setModelLabel(cached.model);
       setWebsiteMeta(cached.websiteFetch);
+      setPageMeta(cached.pageMeta);
       setExistingLlmsMeta(cached.existingLlmsTxt);
       setFallbackNote(cached.fallbackNote);
       setStatus("ready");
@@ -143,6 +148,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
     setErrorMessage(null);
     setModelLabel(null);
     setWebsiteMeta(null);
+    setPageMeta(null);
     setExistingLlmsMeta(null);
     setFallbackNote(null);
     setGeneratedMarkdown("");
@@ -177,6 +183,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
             markdown: body.markdown,
             model: body.model || "unknown",
             websiteFetch: body.websiteFetch ?? null,
+            pageMeta: body.pageMeta ?? null,
             existingLlmsTxt: body.existingLlmsTxt ?? null,
             fallbackNote: note,
           };
@@ -185,6 +192,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
           setPreviewMode("generated");
           setModelLabel(entry.model);
           setWebsiteMeta(entry.websiteFetch);
+          setPageMeta(entry.pageMeta);
           setExistingLlmsMeta(entry.existingLlmsTxt);
           setFallbackNote(entry.fallbackNote);
           setStatus("ready");
@@ -243,6 +251,7 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
     setPreviewMode("template");
     setModelLabel("Offline template (no LLM)");
     setWebsiteMeta(null);
+    setPageMeta(null);
     setExistingLlmsMeta(null);
     setFallbackNote("Using the offline template (chosen manually).");
     setStatus("ready");
@@ -403,6 +412,15 @@ export function LlmsTxtPanel({ company, data }: LlmsTxtPanelProps) {
                         {websiteMeta.ok
                           ? `loaded (${websiteMeta.htmlChars.toLocaleString()} chars${websiteMeta.htmlTruncated ? ", truncated" : ""} from ${websiteMeta.finalUrl || company.website})`
                           : `partial or failed${websiteMeta.error ? ` — ${websiteMeta.error}` : ""}`}
+                      </>
+                    ) : null}
+                    {pageMeta?.title ? (
+                      <>
+                        {" "}
+                        · <span className="font-medium text-slate-700">Page title:</span>{" "}
+                        {pageMeta.title.length > 60
+                          ? `${pageMeta.title.slice(0, 57)}…`
+                          : pageMeta.title}
                       </>
                     ) : null}
                     {existingLlmsMeta?.url ? (
