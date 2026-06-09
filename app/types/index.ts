@@ -78,12 +78,35 @@ export interface MissedOpportunity {
   category: PromptCategory;
   competitorMentions: string[];
   explanation: string;
+  resultSummary: string;
+  suggestedPageTitle: string;
+  suggestedAction: string;
+  strongestCompetitor: string;
 }
 
 export interface InaccuracyEntry {
   promptId: string;
   prompt: string;
   items: string[];
+}
+
+export type RecommendationPriority = "critical" | "high" | "medium" | "low";
+
+export interface RecommendationEvidence {
+  promptId: string;
+  prompt: string;
+  category: PromptCategory;
+  resultSummary: string;
+  competitorMentions: string[];
+}
+
+export interface Recommendation {
+  id: string;
+  title: string;
+  priority: RecommendationPriority;
+  action: string;
+  contentIdeas: string[];
+  supportingPrompts: RecommendationEvidence[];
 }
 
 export interface AggregateStats {
@@ -105,7 +128,7 @@ export interface AggregateStats {
   topMissedOpportunities: MissedOpportunity[];
   possibleInaccuracies: InaccuracyEntry[];
   aiPositioningSummary: string;
-  recommendations: string[];
+  recommendations: Recommendation[];
 }
 
 export type AIModel = "gpt-4o" | "claude" | "gemini";

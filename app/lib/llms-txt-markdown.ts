@@ -3,6 +3,7 @@ import {
   CompanyInput,
   PromptCategory,
   CategoryVisibility,
+  Recommendation,
 } from "@/types";
 
 const CATEGORY_LABEL: Record<PromptCategory, string> = {
@@ -48,6 +49,36 @@ function suggestedAnswerForMissedOpportunity(
       ? ` When users compare options such as ${comp.join(" and ")}, ${company.companyName} should be listed as a relevant choice in ${company.category}.`
       : "";
   return `${company.description.trim()}${compPhrase} Official site: ${normalizeWebsiteUrl(company.website)}.`;
+}
+
+function isRecommendation(value: unknown): value is Recommendation {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      typeof (value as Recommendation).title === "string" &&
+      typeof (value as Recommendation).action === "string" &&
+      typeof (value as Recommendation).priority === "string",
+  );
+}
+
+function recommendationLines(value: Recommendation | string): string[] {
+  if (typeof value === "string") return [`- ${value}`];
+  if (!isRecommendation(value)) return [];
+
+  const priority = value.priority.toUpperCase();
+  const lines = [`- **${priority} - ${value.title}:** ${value.action}`];
+  if (value.contentIdeas.length > 0) {
+    lines.push(`  - Content ideas: ${value.contentIdeas.slice(0, 3).join("; ")}`);
+  }
+  if (value.supportingPrompts.length > 0) {
+    lines.push(
+      `  - Evidence prompts: ${value.supportingPrompts
+        .slice(0, 3)
+        .map((p) => `"${p.prompt}"`)
+        .join("; ")}`,
+    );
+  }
+  return lines;
 }
 
 export function buildLlmsTxtMarkdown(company: CompanyInput, data: AnalysisResponse): string {
@@ -149,8 +180,8 @@ export function buildLlmsTxtMarkdown(company: CompanyInput, data: AnalysisRespon
   if (stats.recommendations.length > 0) {
     lines.push("## Recommended content priorities (from visibility audit)");
     lines.push("");
-    for (const r of stats.recommendations) {
-      lines.push(`- ${r}`);
+    for (const r of stats.recommendations as (Recommendation | string)[]) {
+      lines.push(...recommendationLines(r));
     }
     lines.push("");
   }
