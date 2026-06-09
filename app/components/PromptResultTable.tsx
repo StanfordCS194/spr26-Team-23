@@ -29,6 +29,10 @@ const ALL_SENTIMENTS: Sentiment[] = ["positive", "neutral", "negative", "not_men
 const selectClass =
   "rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100";
 
+function promptAnchor(promptId: string): string {
+  return `prompt-${promptId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+}
+
 export function PromptResultTable({ analyses }: PromptResultTableProps) {
   const [openPromptId, setOpenPromptId] = useState<string | null>(null);
   const [filterCategory, setFilterCategory] = useState<PromptCategory | "all">("all");
@@ -154,7 +158,8 @@ export function PromptResultTable({ analyses }: PromptResultTableProps) {
           return (
             <div
               key={item.promptId}
-              className={`py-4 ${
+              id={promptAnchor(item.promptId)}
+              className={`scroll-mt-4 py-4 ${
                 item.error
                   ? "rounded-md border border-rose-200 bg-rose-50 px-3"
                   : ""
