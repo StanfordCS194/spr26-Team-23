@@ -116,9 +116,37 @@ export interface ModelAnalysis {
   aggregateStats: AggregateStats;
 }
 
+export type AnalysisProviderName = AIModel | "deterministic" | "local-fallback";
+
+export interface AnalysisBatchUsage {
+  kind: "answers" | "analysis";
+  provider: AnalysisProviderName;
+  attempted: number;
+  succeeded: number;
+  failed: number;
+  promptsSucceeded: number;
+  promptsFailed: number;
+  retries: number;
+  timeouts: number;
+}
+
+export interface AnalysisProviderUsage {
+  model: AIModel;
+  promptCount: number;
+  answerProvider: AIModel | "local-fallback";
+  analyzerProvider: "gemini" | "deterministic";
+  answerBatches: AnalysisBatchUsage;
+  analysisBatches: AnalysisBatchUsage;
+  responsesFromProvider: number;
+  responsesFromFallback: number;
+  analysesFromProvider: number;
+  analysesFromFallback: number;
+}
+
 export interface AnalysisResponse {
   models?: ModelAnalysis[];
   aggregateStats: AggregateStats;
   promptAnalyses: PromptAnalysis[];
+  providerUsage?: AnalysisProviderUsage[];
   cache?: CacheMetadata;
 }

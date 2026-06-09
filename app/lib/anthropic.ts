@@ -14,13 +14,27 @@ export function getAnthropicClient(): Anthropic {
   return client;
 }
 
-export async function queryClaudeWithPrompt(prompt: string): Promise<string> {
+interface ProviderRequestOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+export async function queryClaudeWithPrompt(
+  prompt: string,
+  options: ProviderRequestOptions = {},
+): Promise<string> {
   const anthropic = getAnthropicClient();
-  const message = await anthropic.messages.create({
-    model: CLAUDE_MODEL,
-    max_tokens: 300,
-    messages: [{ role: "user", content: prompt }],
-  });
+  const message = await anthropic.messages.create(
+    {
+      model: CLAUDE_MODEL,
+      max_tokens: 300,
+      messages: [{ role: "user", content: prompt }],
+    },
+    {
+      ...(options.timeoutMs ? { timeout: options.timeoutMs } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+    },
+  );
   const block = message.content[0];
   return block.type === "text" ? block.text : "";
 }
