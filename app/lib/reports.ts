@@ -39,7 +39,15 @@ export async function createReport(userId: string, payload: StoredReportPayload)
   });
 }
 
-export function serializeReport(report: Report) {
+export interface SerializedReport {
+  id: string;
+  createdAt: string;
+  company: CompanyInput;
+  prompts: GeneratedPrompt[];
+  analysis: AnalysisResponse;
+}
+
+export function serializeReport(report: Report): SerializedReport {
   return {
     id: report.id,
     createdAt: report.createdAt.toISOString(),
@@ -59,4 +67,14 @@ export function serializeReport(report: Report) {
       : [],
     analysis: report.analysis as unknown as AnalysisResponse,
   };
+}
+
+export async function listReportsForClerkUser(clerkId: string): Promise<SerializedReport[]> {
+  const reports = await prisma.report.findMany({
+    where: { user: { clerkId } },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  });
+
+  return reports.map(serializeReport);
 }

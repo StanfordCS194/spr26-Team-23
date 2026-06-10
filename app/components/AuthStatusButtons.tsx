@@ -14,6 +14,13 @@ export function AuthStatusButtons() {
     return (
       <>
         <Link
+          href="/reports"
+          prefetch={false}
+          className="hidden h-9 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:inline-flex"
+        >
+          My Reports
+        </Link>
+        <Link
           href="/dashboard"
           prefetch={false}
           className="hidden h-9 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:inline-flex"
