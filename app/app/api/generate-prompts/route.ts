@@ -66,6 +66,11 @@ Rules:
 - Do not include markdown.
 - Return valid parseable JSON only.`;
 
+interface RequestBody extends CompanyInput {
+  autoGenerateCompetitors?: boolean;
+  targetCompetitorCount?: number;
+}
+
 interface ParsedPrompt {
   id?: string;
   category: PromptCategory;
@@ -139,11 +144,38 @@ function jsonResponse(
   return NextResponse.json(body, { headers: mergeHeaders(cacheHeaders(metadata), headers) });
 }
 
+async function generateCompetitors(name: string, category: string, count: number): Promise<string[]> {
+  try {
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("timeout")), 6000),
+    );
+    const raw = await Promise.race([
+      generateText({
+        systemInstruction: `Return ONLY a JSON array of up to ${count} direct competitor company names. No explanation. Example: ["Adyen","Braintree","Square"]`,
+        prompt: `Company: ${name}${category ? `\nIndustry: ${category}` : ""}`,
+        expectJson: true,
+        maxOutputTokens: 128,
+        temperature: 0.1,
+      }),
+      timeout,
+    ]);
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (!match) return [];
+    const parsed = JSON.parse(match[0]);
+    return Array.isArray(parsed)
+      ? parsed.filter((c): c is string => typeof c === "string").slice(0, count)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function POST(request: Request) {
   const authResult = await authorizeApiRequest(request, "generate-prompts");
   if (!authResult.ok) return authResult.response;
 
-  const input = await readJson<CompanyInput>(request);
+  const body = await readJson<RequestBody>(request);
+  const input = body as CompanyInput | null;
 
   if (!input) {
     return invalidRequestResponse(
@@ -174,6 +206,16 @@ export async function POST(request: Request) {
       "numberOfPrompts must be an integer between 5 and 50.",
       authResult.rateLimitHeaders,
     );
+  }
+
+  // Auto-generate competitors to fill up to target count
+  const autoGenerate = body?.autoGenerateCompetitors ?? true;
+  const targetCount = body?.targetCompetitorCount ?? 3;
+  const existing = input.competitors ?? [];
+  if (autoGenerate && existing.length < targetCount && process.env.GEMINI_API_KEY) {
+    const needed = targetCount - existing.length;
+    const generated = await generateCompetitors(input.companyName, input.category, needed);
+    input.competitors = [...existing, ...generated];
   }
 
   const cacheKey = createPromptGenerationCacheKey(input, providerFingerprint());

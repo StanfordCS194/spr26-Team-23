@@ -14,10 +14,16 @@ import posthog from "posthog-js";
 import { FormEvent, useEffect, useId, useRef, useState } from "react";
 import { PromptGenerationPreview } from "./PromptGenerationPreview";
 
-interface ClearbitSuggestion {
+interface CompanySuggestion {
   name: string;
   domain: string;
   logo: string;
+}
+
+interface BrandfetchResult {
+  name?: string;
+  domain?: string;
+  icon?: string;
 }
 
 function logoUrlFromDomain(domain: string): string {
@@ -31,7 +37,7 @@ const defaultState: CompanyInput = {
   description:
     "Helps users compare restaurant and liquor store wine prices with market prices and choose better-value wines.",
   category: "wine apps / restaurant wine decision tools",
-  competitors: ["Vivino", "CellarTracker", "Delectable"],
+  competitors: [],
   numberOfPrompts: 10,
   logoUrl: logoUrlFromDomain("winefind.ai"),
 };
@@ -61,13 +67,14 @@ export function TunnelInputForm() {
   const [prompts, setPrompts] = useState<GeneratedPrompt[]>([]);
   const [loadingStep, setLoadingStep] = useState<"idle" | "generating" | "analyzing">("idle");
   const [error, setError] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<ClearbitSuggestion[]>([]);
+  const [suggestions, setSuggestions] = useState<CompanySuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [companyInputFocused, setCompanyInputFocused] = useState(false);
   const [companyInputTouched, setCompanyInputTouched] = useState(false);
-  const [autocompleteStatus, setAutocompleteStatus] = useState<"idle" | "loading" | "loaded">(
-    "idle",
-  );
+  const [autocompleteStatus, setAutocompleteStatus] = useState<"idle" | "loading" | "loaded">("idle");
+  const [enriching, setEnriching] = useState(false);
+  const [autoGenerateCompetitors, setAutoGenerateCompetitors] = useState(true);
+  const [targetCompetitorCount, setTargetCompetitorCount] = useState(3);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -84,9 +91,7 @@ export function TunnelInputForm() {
   const autocompleteOpen =
     showSuggestions &&
     canShowAutocomplete &&
-    (autocompleteStatus === "loading" ||
-      autocompleteStatus === "loaded" ||
-      suggestions.length > 0);
+    (autocompleteStatus === "loading" || autocompleteStatus === "loaded" || suggestions.length > 0);
   const activeSuggestionId =
     autocompleteOpen && activeSuggestionIndex >= 0 && suggestions[activeSuggestionIndex]
       ? `${companyListboxId}-option-${activeSuggestionIndex}`
@@ -121,27 +126,55 @@ export function TunnelInputForm() {
       abortControllerRef.current?.abort();
       const controller = new AbortController();
       abortControllerRef.current = controller;
+
       try {
-        const res = await fetch(
-          `https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(query)}`,
-          { signal: controller.signal },
-        );
-        if (res.ok) {
-          const data = (await res.json()) as ClearbitSuggestion[];
-          if (controller.signal.aborted) return;
-          setSuggestions(data);
-          setAutocompleteStatus("loaded");
-          setShowSuggestions(dismissedAutocompleteQueryRef.current !== query);
-          setActiveSuggestionIndex(-1);
-        } else if (!controller.signal.aborted) {
-          setSuggestions([]);
-          setAutocompleteStatus("loaded");
-          setShowSuggestions(dismissedAutocompleteQueryRef.current !== query);
-          setActiveSuggestionIndex(-1);
+        const [clearbitRes, brandfetchRes] = await Promise.allSettled([
+          fetch(
+            `https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(query)}&limit=10`,
+            { signal: controller.signal },
+          ),
+          fetch(
+            `https://api.brandfetch.io/v2/search/${encodeURIComponent(query)}`,
+            { signal: controller.signal },
+          ),
+        ]);
+
+        if (controller.signal.aborted) return;
+
+        const seen = new Set<string>();
+        const merged: CompanySuggestion[] = [];
+
+        if (clearbitRes.status === "fulfilled" && clearbitRes.value.ok) {
+          const data = (await clearbitRes.value.json()) as CompanySuggestion[];
+          for (const s of data) {
+            if (s.domain && !seen.has(s.domain)) {
+              seen.add(s.domain);
+              merged.push(s);
+            }
+          }
         }
+
+        if (brandfetchRes.status === "fulfilled" && brandfetchRes.value.ok) {
+          const data = (await brandfetchRes.value.json()) as BrandfetchResult[];
+          for (const s of data) {
+            if (s.domain && !seen.has(s.domain) && s.name) {
+              seen.add(s.domain);
+              merged.push({
+                name: s.name,
+                domain: s.domain,
+                logo: s.icon ?? logoUrlFromDomain(s.domain),
+              });
+            }
+          }
+        }
+
+        if (controller.signal.aborted) return;
+        setSuggestions(merged.slice(0, 10));
+        setAutocompleteStatus("loaded");
+        setShowSuggestions(dismissedAutocompleteQueryRef.current !== query);
+        setActiveSuggestionIndex(-1);
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") return;
-        // autocomplete is non-critical, fail silently
         setSuggestions([]);
         setShowSuggestions(false);
         setAutocompleteStatus("idle");
@@ -151,6 +184,7 @@ export function TunnelInputForm() {
         }
       }
     }, 300);
+
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       abortControllerRef.current?.abort();
@@ -158,7 +192,7 @@ export function TunnelInputForm() {
     };
   }, [companyInputFocused, companyInputTouched, form.companyName]);
 
-  const onSelectSuggestion = (suggestion: ClearbitSuggestion) => {
+  const onSelectSuggestion = (suggestion: CompanySuggestion) => {
     suppressFetchRef.current = true;
     dismissedAutocompleteQueryRef.current = null;
     setForm((prev) => ({
@@ -166,11 +200,33 @@ export function TunnelInputForm() {
       companyName: suggestion.name,
       website: suggestion.domain,
       logoUrl: logoUrlFromDomain(suggestion.domain),
+      description: "",
+      category: "",
+      competitors: [],
     }));
     setSuggestions([]);
     setShowSuggestions(false);
     setAutocompleteStatus("idle");
     setActiveSuggestionIndex(-1);
+
+    setEnriching(true);
+    fetch("/api/enrich-company", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ domain: suggestion.domain, name: suggestion.name }),
+    })
+      .then((r) => r.json())
+      .then((data: { ok?: boolean; description?: string; category?: string; competitors?: string[] }) => {
+        if (!data.ok) return;
+        setForm((prev) => ({
+          ...prev,
+          ...(data.description ? { description: data.description } : {}),
+          ...(data.category ? { category: data.category } : {}),
+          ...(data.competitors?.length ? { competitors: data.competitors } : {}),
+        }));
+      })
+      .catch(() => { /* enrichment is non-critical */ })
+      .finally(() => setEnriching(false));
   };
 
   const update = (key: keyof CompanyInput, value: string | number | string[]) => {
@@ -191,7 +247,7 @@ export function TunnelInputForm() {
       const response = await fetch("/api/generate-prompts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, autoGenerateCompetitors, targetCompetitorCount }),
       });
 
       if (!response.ok) throw new Error("Could not generate prompts.");
@@ -221,7 +277,6 @@ export function TunnelInputForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ company: form, prompts, analysis }),
       });
-
       if (!response.ok && response.status !== 401) {
         console.warn("[reports] Could not save report:", await response.text());
       }
@@ -493,6 +548,7 @@ export function TunnelInputForm() {
           <div className="md:col-span-2">
             <label htmlFor="description" className={labelClass}>
               One-sentence product description
+              {enriching && <span className="ml-2 text-xs font-normal text-sky-500 animate-pulse">auto-filling…</span>}
             </label>
             <textarea
               id="description"
@@ -507,6 +563,7 @@ export function TunnelInputForm() {
           <div>
             <label htmlFor="category" className={labelClass}>
               Category / industry
+              {enriching && <span className="ml-2 text-xs font-normal text-sky-500 animate-pulse">auto-filling…</span>}
             </label>
             <input
               id="category"
@@ -520,7 +577,9 @@ export function TunnelInputForm() {
 
           <div>
             <label htmlFor="competitors" className={labelClass}>
-              Competitors (comma-separated)
+              Competitors
+              <span className="ml-1 font-normal text-slate-400">(optional)</span>
+              {enriching && <span className="ml-2 text-xs font-normal text-sky-500 animate-pulse">auto-filling…</span>}
             </label>
             <input
               id="competitors"
@@ -537,6 +596,28 @@ export function TunnelInputForm() {
                 )
               }
             />
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                id="auto-generate-competitors"
+                type="checkbox"
+                checked={autoGenerateCompetitors}
+                onChange={(e) => setAutoGenerateCompetitors(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+              />
+              <label htmlFor="auto-generate-competitors" className="text-sm text-slate-600">
+                Auto-generate to fill up to
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={targetCompetitorCount}
+                disabled={!autoGenerateCompetitors}
+                onChange={(e) => setTargetCompetitorCount(Math.max(1, Math.min(10, Number(e.target.value) || 1)))}
+                className="w-14 rounded border border-slate-300 px-2 py-0.5 text-sm text-center disabled:opacity-40"
+              />
+              <span className="text-sm text-slate-600">total</span>
+            </div>
           </div>
 
           <div>
