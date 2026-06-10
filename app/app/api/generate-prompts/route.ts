@@ -159,7 +159,7 @@ async function generateCompetitors(name: string, category: string, count: number
       }),
       timeout,
     ]);
-    const match = raw.match(/\[.*\]/s);
+    const match = raw.match(/\[[\s\S]*\]/);
     if (!match) return [];
     const parsed = JSON.parse(match[0]);
     return Array.isArray(parsed)
