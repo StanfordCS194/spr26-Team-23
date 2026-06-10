@@ -2,6 +2,8 @@
 
 import { SignInButton, SignUpButton, useAuth } from "@clerk/nextjs";
 import { DEMO_COMPANY, getDemoAnalysisResponse } from "@/lib/demo-data";
+import { writeActiveReport } from "@/lib/report-session";
+import { SerializedReport } from "@/lib/reports";
 import {
   AnalysisResponse,
   CompanyInput,
@@ -270,18 +272,25 @@ export function TunnelInputForm() {
     }
   };
 
-  const saveReport = async (analysis: AnalysisResponse) => {
+  const saveReport = async (analysis: AnalysisResponse): Promise<SerializedReport | null> => {
     try {
       const response = await fetch("/api/reports", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ company: form, prompts, analysis }),
       });
-      if (!response.ok && response.status !== 401) {
-        console.warn("[reports] Could not save report:", await response.text());
+      if (!response.ok) {
+        if (response.status !== 401) {
+          console.warn("[reports] Could not save report:", await response.text());
+        }
+        return null;
       }
+
+      const data = (await response.json()) as { report?: SerializedReport };
+      return data.report ?? null;
     } catch (error) {
       console.warn("[reports] Could not save report:", error);
+      return null;
     }
   };
 
@@ -317,11 +326,18 @@ export function TunnelInputForm() {
         num_models: analysis.models?.length ?? 1,
         visibility_score: analysis.aggregateStats?.visibilityScore,
       });
-      window.localStorage.setItem(
-        "tunnel-latest-report",
-        JSON.stringify({ company: form, analysis }),
-      );
-      await saveReport(analysis);
+      writeActiveReport({ company: form, analysis });
+
+      const saved = await saveReport(analysis);
+      if (saved) {
+        writeActiveReport({
+          id: saved.id,
+          createdAt: saved.createdAt,
+          company: saved.company,
+          analysis: saved.analysis,
+        });
+      }
+
       router.push("/dashboard");
     } catch (error) {
       const message =
@@ -336,10 +352,7 @@ export function TunnelInputForm() {
   const onUseDemoData = () => {
     posthog.capture("demo_mode_used");
     const analysis = getDemoAnalysisResponse();
-    window.localStorage.setItem(
-      "tunnel-latest-report",
-      JSON.stringify({ company: DEMO_COMPANY, analysis }),
-    );
+    writeActiveReport({ company: DEMO_COMPANY, analysis });
     router.push("/dashboard");
   };
 

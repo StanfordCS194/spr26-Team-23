@@ -3,32 +3,29 @@
 import { useUser } from "@clerk/nextjs";
 import { TunnelDashboard } from "@/components/TunnelDashboard";
 import { DEMO_COMPANY, getDemoAnalysisResponse } from "@/lib/demo-data";
-import { AnalysisResponse, CompanyInput } from "@/types";
+import {
+  ActiveReport,
+  readActiveReport,
+  resolveDashboardReport,
+} from "@/lib/report-session";
+import { SerializedReport } from "@/lib/reports";
 import Link from "next/link";
 import posthog from "posthog-js";
 import { useEffect, useState } from "react";
 
-interface StoredTunnelData {
-  company: CompanyInput;
-  analysis: AnalysisResponse;
-}
-
-const STORAGE_KEY = "tunnel-latest-report";
-
-function readStoredPayload(): StoredTunnelData | null {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as StoredTunnelData;
-  } catch {
-    return null;
-  }
+function toActiveReport(report: SerializedReport): ActiveReport {
+  return {
+    id: report.id,
+    createdAt: report.createdAt,
+    company: report.company,
+    analysis: report.analysis,
+  };
 }
 
 export default function DashboardPage() {
   const { isLoaded, isSignedIn } = useUser();
   const [hydrated, setHydrated] = useState(false);
-  const [payload, setPayload] = useState<StoredTunnelData | null>(null);
+  const [payload, setPayload] = useState<ActiveReport | null>(null);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -36,32 +33,33 @@ export default function DashboardPage() {
     let active = true;
 
     async function loadReport() {
-      let nextPayload = readStoredPayload();
-      let source = nextPayload ? "stored" : "demo";
+      const stored = readActiveReport();
+      let dbLatest: ActiveReport | null = null;
 
-      if (isSignedIn) {
+      if (isSignedIn && !stored) {
         try {
           const response = await fetch("/api/reports/latest");
           if (response.ok) {
-            const data = (await response.json()) as { report?: StoredTunnelData | null };
+            const data = (await response.json()) as { report?: SerializedReport | null };
             if (data.report) {
-              nextPayload = {
-                company: data.report.company,
-                analysis: data.report.analysis,
-              };
-              source = "database";
+              dbLatest = toActiveReport(data.report);
             }
           }
         } catch {
-          // Fall back to the local copy when the database is unavailable.
+          // Fall back when the database is unavailable.
         }
       }
+
+      const { payload: nextPayload, source } = resolveDashboardReport({
+        stored,
+        dbLatest,
+      });
 
       if (active) {
         setPayload(nextPayload);
         setHydrated(true);
         posthog.capture("dashboard_viewed", {
-          source,
+          source: source ?? "demo",
           company_name: nextPayload?.company.companyName ?? "Wine Find",
         });
       }
@@ -93,5 +91,11 @@ export default function DashboardPage() {
     );
   }
 
-  return <TunnelDashboard company={payload.company} data={payload.analysis} />;
+  return (
+    <TunnelDashboard
+      company={payload.company}
+      data={payload.analysis}
+      auditedAt={payload.createdAt}
+    />
+  );
 }

@@ -17,6 +17,7 @@ import { PositioningSummary } from "./PositioningSummary";
 import { PossibleInaccuracies } from "./PossibleInaccuracies";
 import { PromptResultTable } from "./PromptResultTable";
 import { RecommendationsPanel } from "./RecommendationsPanel";
+import { formatAuditedDate } from "@/lib/report-session";
 import { VisibilityScoreCard } from "./VisibilityScoreCard";
 
 const MODEL_LABELS: Record<AIModel, string> = {
@@ -28,9 +29,10 @@ const MODEL_LABELS: Record<AIModel, string> = {
 interface TunnelDashboardProps {
   company: CompanyInput;
   data: AnalysisResponse;
+  auditedAt?: string;
 }
 
-export function TunnelDashboard({ company, data }: TunnelDashboardProps) {
+export function TunnelDashboard({ company, data, auditedAt }: TunnelDashboardProps) {
   const [activeModel, setActiveModel] = useState<AIModel | null>(
     data.models?.length ? data.models[0].model : null,
   );
@@ -69,6 +71,11 @@ export function TunnelDashboard({ company, data }: TunnelDashboardProps) {
                 <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
                   Tunnel report
                 </p>
+                {auditedAt ? (
+                  <p className="mt-1 text-sm text-slate-500">
+                    Audited {formatAuditedDate(auditedAt)}
+                  </p>
+                ) : null}
                 <div className="mt-3 flex items-start gap-4">
                   {company.logoUrl && (
                     <span className="flex h-12 w-12 items-center justify-center rounded-lg border border-slate-200 bg-white shadow-sm">

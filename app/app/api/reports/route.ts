@@ -1,6 +1,23 @@
 import { currentUser } from "@clerk/nextjs/server";
 import { upsertAppUser } from "@/lib/auth-db";
-import { createReport, isReportPayload, serializeReport } from "@/lib/reports";
+import {
+  createReport,
+  isReportPayload,
+  listReportsForClerkUser,
+  serializeReport,
+} from "@/lib/reports";
+
+export async function GET() {
+  const clerkUser = await currentUser();
+
+  if (!clerkUser) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const reports = await listReportsForClerkUser(clerkUser.id);
+
+  return Response.json({ reports });
+}
 
 export async function POST(request: Request) {
   const clerkUser = await currentUser();

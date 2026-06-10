@@ -10,7 +10,9 @@ const mocks = vi.hoisted(() => ({
   fetchPublicPageHtmlForModel: vi.fn(),
   generateText: vi.fn(),
   isReportPayload: vi.fn(),
+  listReportsForClerkUser: vi.fn(),
   prismaReportFindFirst: vi.fn(),
+  prismaReportFindMany: vi.fn(),
   queryClaudeWithPrompt: vi.fn(),
   queryGPT4oWithPrompt: vi.fn(),
   queryGeminiWithPrompt: vi.fn(),
@@ -56,6 +58,7 @@ vi.mock("@/lib/auth-db", () => ({
 vi.mock("@/lib/reports", () => ({
   createReport: mocks.createReport,
   isReportPayload: mocks.isReportPayload,
+  listReportsForClerkUser: mocks.listReportsForClerkUser,
   serializeReport: mocks.serializeReport,
 }));
 
@@ -63,6 +66,7 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     report: {
       findFirst: mocks.prismaReportFindFirst,
+      findMany: mocks.prismaReportFindMany,
     },
   },
 }));
@@ -304,6 +308,56 @@ describe("POST /api/reports", () => {
     await expect(response.json()).resolves.toEqual({ error: "Invalid report payload." });
     expect(mocks.upsertAppUser).not.toHaveBeenCalled();
     expect(mocks.createReport).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/reports", () => {
+  it("returns unauthorized before listing reports", async () => {
+    mocks.currentUser.mockResolvedValue(null);
+    const { GET } = await import("@/app/api/reports/route");
+
+    const response = await GET();
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(mocks.listReportsForClerkUser).not.toHaveBeenCalled();
+  });
+
+  it("returns serialized reports for authenticated users", async () => {
+    mocks.currentUser.mockResolvedValue({
+      id: "user_123",
+      primaryEmailAddress: { emailAddress: "user@example.com" },
+      fullName: "Test User",
+      imageUrl: "https://example.com/avatar.png",
+    });
+    const company = minimalCompanyFixture();
+    const analysis = minimalAnalysisFixture();
+    mocks.listReportsForClerkUser.mockResolvedValue([
+      {
+        id: "report_1",
+        createdAt: "2026-06-08T12:00:00.000Z",
+        company,
+        prompts: [],
+        analysis,
+      },
+    ]);
+
+    const { GET } = await import("@/app/api/reports/route");
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      reports: [
+        {
+          id: "report_1",
+          createdAt: "2026-06-08T12:00:00.000Z",
+          company,
+          prompts: [],
+          analysis,
+        },
+      ],
+    });
+    expect(mocks.listReportsForClerkUser).toHaveBeenCalledWith("user_123");
   });
 });
 
