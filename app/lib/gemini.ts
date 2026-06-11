@@ -1,4 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
+import { normalizeAnswerSources } from "@/lib/source-utils";
+import { ModelAnswer } from "@/types";
 
 export const GEMINI_MODEL = "gemini-3-flash-preview";
 
@@ -76,4 +78,68 @@ export async function queryGeminiWithPrompt(
     },
   });
   return response.text ?? "";
+}
+
+interface GeminiGroundingResponse {
+  text?: string;
+  candidates?: Array<{
+    groundingMetadata?: {
+      groundingChunks?: Array<{ web?: { uri?: string; title?: string } }>;
+      groundingSupports?: Array<{
+        segment?: { text?: string };
+        groundingChunkIndices?: number[];
+      }>;
+      webSearchQueries?: string[];
+    };
+  }>;
+}
+
+export function extractGeminiWebAnswer(response: GeminiGroundingResponse): ModelAnswer {
+  const groundingMetadata = response.candidates?.[0]?.groundingMetadata;
+  const chunks = groundingMetadata?.groundingChunks ?? [];
+  const supports = groundingMetadata?.groundingSupports ?? [];
+  const citedTextByChunk = new Map<number, string>();
+
+  for (const support of supports) {
+    const segmentText = support.segment?.text;
+    if (!segmentText || !support.groundingChunkIndices?.length) continue;
+    for (const index of support.groundingChunkIndices) {
+      if (!citedTextByChunk.has(index)) citedTextByChunk.set(index, segmentText);
+    }
+  }
+
+  const sources = normalizeAnswerSources(
+    chunks.map((chunk, index) => ({
+      url: chunk.web?.uri,
+      title: chunk.web?.title,
+      citedText: citedTextByChunk.get(index),
+      provider: "gemini" as const,
+    })),
+  );
+
+  return {
+    response: response.text ?? "",
+    sources,
+    grounded: sources.length > 0 || Boolean(groundingMetadata?.webSearchQueries?.length),
+  };
+}
+
+export async function queryGeminiWithWebPrompt(
+  prompt: string,
+  options: ProviderRequestOptions = {},
+): Promise<ModelAnswer> {
+  const ai = getGeminiClient();
+  const response = await ai.models.generateContent({
+    model: GEMINI_MODEL,
+    contents: prompt,
+    config: {
+      maxOutputTokens: 300,
+      temperature: 0.7,
+      tools: [{ googleSearch: {} }],
+      ...(options.timeoutMs ? { httpOptions: { timeout: options.timeoutMs } } : {}),
+      ...(options.signal ? { abortSignal: options.signal } : {}),
+    },
+  });
+
+  return extractGeminiWebAnswer(response);
 }

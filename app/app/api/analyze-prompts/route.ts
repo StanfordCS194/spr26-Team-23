@@ -14,27 +14,37 @@ import {
   buildPromptAnalysis,
   deterministicAnalyze,
 } from "@/lib/analysis";
-import { queryClaudeWithPrompt } from "@/lib/anthropic";
-import { GEMINI_MODEL, generateText, queryGeminiWithPrompt } from "@/lib/gemini";
+import { queryClaudeWithPrompt, queryClaudeWithWebPrompt } from "@/lib/anthropic";
+import {
+  GEMINI_MODEL,
+  generateText,
+  queryGeminiWithPrompt,
+  queryGeminiWithWebPrompt,
+} from "@/lib/gemini";
 import { safeParseJson } from "@/lib/json-repair";
-import { queryGPT4oWithPrompt } from "@/lib/openai";
+import { queryGPT4oWithPrompt, queryGPT4oWithWebPrompt } from "@/lib/openai";
 import {
   AIModel,
+  AnalysisMode,
   AnalysisBatchUsage,
   AnalysisProviderName,
   AnalysisProviderUsage,
   AnalysisResponse,
   CompanyInput,
   GeneratedPrompt,
+  ModelAnswer,
   ModelAnalysis,
   PromptAnalysis,
   PromptAnalysisDetails,
 } from "@/types";
 import { NextResponse } from "next/server";
 
+const MAX_WEB_PROMPTS = 15;
+
 interface AnalyzeBody {
   company: CompanyInput;
   prompts: GeneratedPrompt[];
+  analysisMode?: AnalysisMode;
 }
 
 const VALID_CATEGORIES = new Set<GeneratedPrompt["category"]>([
@@ -132,13 +142,18 @@ interface ProviderAnalysisResult {
 
 interface QueryModelResult {
   model: AIModel;
-  responses: Record<string, string>;
+  answers: Record<string, ModelAnswer>;
   usage: AnalysisProviderUsage;
 }
 
 interface ModelAnalysisResult {
   analysis: ModelAnalysis;
   usage: AnalysisProviderUsage;
+}
+
+interface ProviderAnswerResult {
+  answers: Record<string, ModelAnswer>;
+  usage: AnalysisBatchUsage;
 }
 
 const ANSWER_BATCH_SIZE = 8;
@@ -353,10 +368,25 @@ function countPromptValues<T>(prompts: GeneratedPrompt[], values: Record<string,
   return prompts.filter((prompt) => Boolean(values[prompt.id])).length;
 }
 
-function providerFingerprint(models: AIModel[]): string {
+function providerFingerprint(models: AIModel[], analysisMode: AnalysisMode): string {
   const answerProviders = models.length ? models.join(",") : "local-fallback";
   const analyzer = process.env.GEMINI_API_KEY ? `analysis:${GEMINI_MODEL}` : "analysis:local";
-  return `answers:${answerProviders}|${analyzer}|batch:v2:a${ANSWER_BATCH_SIZE}:n${ANALYSIS_BATCH_SIZE}:c${BATCH_CONCURRENCY}:r${PROVIDER_MAX_ATTEMPTS}:t${PROVIDER_TIMEOUT_MS}`;
+  return `mode:${analysisMode}|answers:${answerProviders}|${analyzer}|batch:v2:a${ANSWER_BATCH_SIZE}:n${ANALYSIS_BATCH_SIZE}:c${BATCH_CONCURRENCY}:r${PROVIDER_MAX_ATTEMPTS}:t${PROVIDER_TIMEOUT_MS}`;
+}
+
+function asModelAnswer(response: string): ModelAnswer {
+  return {
+    response,
+    sources: [],
+    grounded: false,
+  };
+}
+
+function countPromptAnswers(
+  prompts: GeneratedPrompt[],
+  answers: Record<string, ModelAnswer>,
+): number {
+  return prompts.filter((prompt) => Boolean(answers[prompt.id]?.response)).length;
 }
 
 async function generateBatchedGeminiAnswers(
@@ -491,23 +521,33 @@ async function queryModelForPrompts(
   model: AIModel,
   company: CompanyInput,
   prompts: GeneratedPrompt[],
+  analysisMode: AnalysisMode,
 ): Promise<QueryModelResult> {
   const usage = createProviderUsage(model, prompts.length);
 
   if (!providerAvailable(model)) {
     usage.responsesFromFallback = prompts.length;
     usage.answerBatches.promptsFailed = prompts.length;
-    return { model, responses: {}, usage };
+    return { model, answers: {}, usage };
   }
 
-  let responses: Record<string, string> = {};
+  let answers: Record<string, ModelAnswer> = {};
 
-  if (model === "gemini") {
+  if (analysisMode === "web") {
+    const webAnswers = await queryProviderWebPromptAnswers(model, prompts);
+    mergeBatchUsage(usage.answerBatches, webAnswers.usage);
+    answers = webAnswers.answers;
+  } else if (model === "gemini") {
     const batched = await queryGeminiAnswerBatches(company, prompts);
     mergeBatchUsage(usage.answerBatches, batched.usage);
-    responses = { ...batched.responses };
+    answers = Object.fromEntries(
+      Object.entries(batched.responses).map(([promptId, response]) => [
+        promptId,
+        asModelAnswer(response),
+      ]),
+    );
 
-    const missingPrompts = prompts.filter((prompt) => !responses[prompt.id]);
+    const missingPrompts = prompts.filter((prompt) => !answers[prompt.id]?.response);
     if (
       missingPrompts.length &&
       missingPrompts.length <= GEMINI_PER_PROMPT_RECOVERY_LIMIT
@@ -517,7 +557,15 @@ async function queryModelForPrompts(
       );
       const recovered = await queryProviderPromptResponses(model, missingPrompts);
       mergeBatchUsage(usage.answerBatches, recovered.usage);
-      responses = { ...responses, ...recovered.responses };
+      answers = {
+        ...answers,
+        ...Object.fromEntries(
+          Object.entries(recovered.responses).map(([promptId, response]) => [
+            promptId,
+            asModelAnswer(response),
+          ]),
+        ),
+      };
     } else if (missingPrompts.length) {
       console.warn(
         `[analyze-prompts] Gemini answer batches missed ${missingPrompts.length} prompt(s); skipping per-prompt recovery to keep the report bounded.`,
@@ -526,12 +574,17 @@ async function queryModelForPrompts(
   } else {
     const perPrompt = await queryProviderPromptResponses(model, prompts);
     mergeBatchUsage(usage.answerBatches, perPrompt.usage);
-    responses = perPrompt.responses;
+    answers = Object.fromEntries(
+      Object.entries(perPrompt.responses).map(([promptId, response]) => [
+        promptId,
+        asModelAnswer(response),
+      ]),
+    );
   }
 
-  usage.responsesFromProvider = countPromptValues(prompts, responses);
+  usage.responsesFromProvider = countPromptAnswers(prompts, answers);
   usage.responsesFromFallback = prompts.length - usage.responsesFromProvider;
-  return { model, responses, usage };
+  return { model, answers, usage };
 }
 
 async function queryGeminiAnswerBatches(
@@ -646,6 +699,59 @@ async function queryProviderPromptResponses(
   return { responses: results, usage };
 }
 
+async function queryProviderWebPromptAnswers(
+  model: AIModel,
+  prompts: GeneratedPrompt[],
+): Promise<ProviderAnswerResult> {
+  const usage = createBatchUsage("answers", model);
+  usage.attempted = prompts.length;
+  const results: Record<string, ModelAnswer> = {};
+
+  const settled = await settledMapLimit(
+    prompts,
+    PER_PROMPT_CONCURRENCY,
+    async (prompt) => {
+      const call = await callProviderWithRetry(
+        `${model} web answer prompt ${prompt.id}`,
+        (signal) => queryPromptWithWebProvider(model, prompt.prompt, { signal }),
+        PROVIDER_TIMEOUT_MS,
+      );
+
+      return {
+        prompt,
+        answer: call.value,
+        retries: call.retries,
+        timeouts: call.timeouts,
+      };
+    },
+  );
+
+  settled.forEach((result, index) => {
+    const prompt = prompts[index];
+    if (result.status === "fulfilled") {
+      usage.succeeded += 1;
+      usage.retries += result.value.retries;
+      usage.timeouts += result.value.timeouts;
+      if (result.value.answer.response) {
+        results[result.value.prompt.id] = result.value.answer;
+        usage.promptsSucceeded += 1;
+      } else {
+        usage.promptsFailed += 1;
+      }
+      return;
+    }
+
+    const stats = retryStats(result.reason);
+    usage.failed += 1;
+    usage.promptsFailed += 1;
+    usage.retries += stats.retries;
+    usage.timeouts += stats.timeouts;
+    console.warn(`[analyze-prompts] ${model} web failed for prompt ${prompt?.id}:`, result.reason);
+  });
+
+  return { answers: results, usage };
+}
+
 async function queryPromptWithProvider(
   model: AIModel,
   prompt: string,
@@ -666,6 +772,29 @@ async function queryPromptWithProvider(
   return queryGeminiWithPrompt(prompt, {
     signal: options.signal,
     timeoutMs: PER_PROMPT_TIMEOUT_MS,
+  });
+}
+
+async function queryPromptWithWebProvider(
+  model: AIModel,
+  prompt: string,
+  options: ProviderRequestOptions,
+): Promise<ModelAnswer> {
+  if (model === "gpt-4o") {
+    return queryGPT4oWithWebPrompt(prompt, {
+      signal: options.signal,
+      timeoutMs: PROVIDER_TIMEOUT_MS,
+    });
+  }
+  if (model === "claude") {
+    return queryClaudeWithWebPrompt(prompt, {
+      signal: options.signal,
+      timeoutMs: PROVIDER_TIMEOUT_MS,
+    });
+  }
+  return queryGeminiWithWebPrompt(prompt, {
+    signal: options.signal,
+    timeoutMs: PROVIDER_TIMEOUT_MS,
   });
 }
 
@@ -742,14 +871,14 @@ async function analyzeModelResponses(
   model: AIModel,
   company: CompanyInput,
   prompts: GeneratedPrompt[],
-  responses: Record<string, string>,
+  answers: Record<string, ModelAnswer>,
   usage: AnalysisProviderUsage,
 ): Promise<ModelAnalysisResult> {
-  const filled = { ...responses };
+  const filled = { ...answers };
   let responseFallbacks = 0;
   for (const p of prompts) {
-    if (!filled[p.id]) {
-      filled[p.id] = fallbackResponse(company, p);
+    if (!filled[p.id]?.response) {
+      filled[p.id] = asModelAnswer(fallbackResponse(company, p));
       responseFallbacks += 1;
     }
   }
@@ -757,16 +886,21 @@ async function analyzeModelResponses(
   usage.responsesFromFallback = responseFallbacks;
   usage.responsesFromProvider = prompts.length - responseFallbacks;
 
-  const llmAnalysis = await analyzeResponseBatches(company, prompts, filled);
+  const responses = Object.fromEntries(
+    Object.entries(filled).map(([promptId, answer]) => [promptId, answer.response]),
+  );
+
+  const llmAnalysis = await analyzeResponseBatches(company, prompts, responses);
   usage.analysisBatches = llmAnalysis.usage;
   usage.analysesFromProvider = countPromptValues(prompts, llmAnalysis.analyses);
   usage.analysesFromFallback = prompts.length - usage.analysesFromProvider;
   usage.analyzerProvider = usage.analysesFromProvider > 0 ? "gemini" : "deterministic";
 
   const promptAnalyses: PromptAnalysis[] = prompts.map((p) => {
-    const response = filled[p.id] ?? "";
+    const answer = filled[p.id] ?? asModelAnswer("");
+    const response = answer.response;
     const details = llmAnalysis.analyses[p.id] ?? deterministicAnalyze(company, p, response);
-    return buildPromptAnalysis(p, response, details);
+    return buildPromptAnalysis(p, answer, details);
   });
 
   return {
@@ -893,6 +1027,17 @@ export async function POST(request: Request) {
     );
   }
 
+  const analysisMode: AnalysisMode = body.analysisMode === "web" ? "web" : "standard";
+
+  if (analysisMode === "web" && body.prompts.length > MAX_WEB_PROMPTS) {
+    return invalidRequestResponse(
+      request,
+      "analyze-prompts",
+      `Web mode supports up to ${MAX_WEB_PROMPTS} prompts. Reduce the prompt list and try again.`,
+      authResult.rateLimitHeaders,
+    );
+  }
+
   const modelsToQuery: AIModel[] = (
     [
       { model: "gpt-4o" as AIModel, key: process.env.OPENAI_API_KEY },
@@ -908,7 +1053,11 @@ export async function POST(request: Request) {
     modelsToQuery.push("gemini");
   }
 
-  const cacheKey = createAnalysisCacheKey(body.company, body.prompts, providerFingerprint(modelsToQuery));
+  const cacheKey = createAnalysisCacheKey(
+    body.company,
+    body.prompts,
+    providerFingerprint(modelsToQuery, analysisMode),
+  );
   const cached = readCache<AnalysisResponse>("analysis", cacheKey);
 
   if (cached) {
@@ -919,12 +1068,14 @@ export async function POST(request: Request) {
   }
 
   console.log(
-    `[analyze-prompts] Starting analysis: company="${body.company.companyName}", prompts=${body.prompts.length}, models=${modelsToQuery.join(", ")}, cacheKey=${cacheKey}`,
+    `[analyze-prompts] Starting analysis: company="${body.company.companyName}", prompts=${body.prompts.length}, mode=${analysisMode}, models=${modelsToQuery.join(", ")}, cacheKey=${cacheKey}`,
   );
 
   try {
     const responseSettled = await Promise.allSettled(
-      modelsToQuery.map((model) => queryModelForPrompts(model, body.company, body.prompts)),
+      modelsToQuery.map((model) =>
+        queryModelForPrompts(model, body.company, body.prompts, analysisMode),
+      ),
     );
 
     const responsesByModel: QueryModelResult[] = responseSettled.map((result, index) => {
@@ -940,12 +1091,12 @@ export async function POST(request: Request) {
       usage.answerBatches = createBatchUsage("answers", "local-fallback");
       usage.answerBatches.promptsFailed = body.prompts.length;
       usage.responsesFromFallback = body.prompts.length;
-      return { model, responses: {}, usage };
+      return { model, answers: {}, usage };
     });
 
     const analysisSettled = await Promise.allSettled(
-      responsesByModel.map(({ model, responses, usage }) =>
-        analyzeModelResponses(model, body.company, body.prompts, responses, usage),
+      responsesByModel.map(({ model, answers, usage }) =>
+        analyzeModelResponses(model, body.company, body.prompts, answers, usage),
       ),
     );
 
@@ -964,6 +1115,7 @@ export async function POST(request: Request) {
     const providerUsage = analysisResults.map((result) => result.usage);
     const primary = modelAnalyses[0];
     const response: AnalysisResponse = {
+      analysisMode,
       models: modelAnalyses,
       aggregateStats: primary.aggregateStats,
       promptAnalyses: primary.promptAnalyses,

@@ -14,8 +14,11 @@ const mocks = vi.hoisted(() => ({
   prismaReportFindFirst: vi.fn(),
   prismaReportFindMany: vi.fn(),
   queryClaudeWithPrompt: vi.fn(),
+  queryClaudeWithWebPrompt: vi.fn(),
   queryGPT4oWithPrompt: vi.fn(),
+  queryGPT4oWithWebPrompt: vi.fn(),
   queryGeminiWithPrompt: vi.fn(),
+  queryGeminiWithWebPrompt: vi.fn(),
   serializeReport: vi.fn(),
   upsertAppUser: vi.fn(),
 }));
@@ -24,14 +27,17 @@ vi.mock("@/lib/gemini", () => ({
   GEMINI_MODEL: "gemini-test-model",
   generateText: mocks.generateText,
   queryGeminiWithPrompt: mocks.queryGeminiWithPrompt,
+  queryGeminiWithWebPrompt: mocks.queryGeminiWithWebPrompt,
 }));
 
 vi.mock("@/lib/openai", () => ({
   queryGPT4oWithPrompt: mocks.queryGPT4oWithPrompt,
+  queryGPT4oWithWebPrompt: mocks.queryGPT4oWithWebPrompt,
 }));
 
 vi.mock("@/lib/anthropic", () => ({
   queryClaudeWithPrompt: mocks.queryClaudeWithPrompt,
+  queryClaudeWithWebPrompt: mocks.queryClaudeWithWebPrompt,
 }));
 
 vi.mock("@/lib/fetch-public-page-text", async (importOriginal) => {
@@ -206,6 +212,29 @@ describe("POST /api/analyze-prompts", () => {
     expect(mocks.queryClaudeWithPrompt).not.toHaveBeenCalled();
     expect(mocks.queryGeminiWithPrompt).not.toHaveBeenCalled();
     expect(mocks.generateText).not.toHaveBeenCalled();
+  });
+
+  it("rejects web mode when more than 15 prompts are submitted", async () => {
+    const { POST } = await import("@/app/api/analyze-prompts/route");
+    const manyPrompts = Array.from({ length: 16 }, (_, index) => ({
+      ...prompts[0],
+      id: `p${index + 1}`,
+      prompt: `Prompt ${index + 1}`,
+    }));
+
+    const response = await POST(
+      jsonRequest("/api/analyze-prompts", {
+        company: companyFixture({ numberOfPrompts: 16 }),
+        prompts: manyPrompts,
+        analysisMode: "web",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "invalid_request",
+      error: "Web mode supports up to 15 prompts. Reduce the prompt list and try again.",
+    });
   });
 });
 

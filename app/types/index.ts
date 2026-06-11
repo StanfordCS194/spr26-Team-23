@@ -7,6 +7,24 @@ export type PromptCategory =
 
 export type Sentiment = "positive" | "neutral" | "negative" | "not_mentioned";
 
+export type AIModel = "gpt-4o" | "claude" | "gemini";
+
+export type AnalysisMode = "standard" | "web";
+
+export interface AnswerSource {
+  url: string;
+  title?: string;
+  domain: string;
+  provider: AIModel;
+  citedText?: string;
+}
+
+export interface ModelAnswer {
+  response: string;
+  sources: AnswerSource[];
+  grounded: boolean;
+}
+
 export interface CompanyInput {
   companyName: string;
   website: string;
@@ -56,6 +74,8 @@ export interface PromptAnalysis {
   category: PromptCategory;
   rationale: string;
   response: string;
+  sources?: AnswerSource[];
+  grounded?: boolean;
   error?: string;
   analysis: PromptAnalysisDetails;
 }
@@ -131,8 +151,6 @@ export interface AggregateStats {
   recommendations: Recommendation[];
 }
 
-export type AIModel = "gpt-4o" | "claude" | "gemini";
-
 export interface ModelAnalysis {
   model: AIModel;
   promptAnalyses: PromptAnalysis[];
@@ -167,6 +185,7 @@ export interface AnalysisProviderUsage {
 }
 
 export interface AnalysisResponse {
+  analysisMode?: AnalysisMode;
   models?: ModelAnalysis[];
   aggregateStats: AggregateStats;
   promptAnalyses: PromptAnalysis[];

@@ -60,6 +60,12 @@ export function TunnelDashboard({ company, data, auditedAt }: TunnelDashboardPro
               >
                 &lt;- New Analysis
               </Link>
+              <Link
+                href="/reports"
+                className="inline-flex items-center rounded-md border border-slate-200 bg-white/80 px-3 py-1.5 text-sm font-medium text-slate-600 shadow-sm backdrop-blur transition hover:border-slate-300 hover:bg-white hover:text-slate-950"
+              >
+                Report History
+              </Link>
               <ExportButton />
               <LlmsTxtPanel company={company} data={data} />
               <div className="ml-auto">
