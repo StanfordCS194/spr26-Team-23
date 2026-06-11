@@ -98,12 +98,35 @@ export interface MissedOpportunity {
   category: PromptCategory;
   competitorMentions: string[];
   explanation: string;
+  resultSummary: string;
+  suggestedPageTitle: string;
+  suggestedAction: string;
+  strongestCompetitor: string;
 }
 
 export interface InaccuracyEntry {
   promptId: string;
   prompt: string;
   items: string[];
+}
+
+export type RecommendationPriority = "critical" | "high" | "medium" | "low";
+
+export interface RecommendationEvidence {
+  promptId: string;
+  prompt: string;
+  category: PromptCategory;
+  resultSummary: string;
+  competitorMentions: string[];
+}
+
+export interface Recommendation {
+  id: string;
+  title: string;
+  priority: RecommendationPriority;
+  action: string;
+  contentIdeas: string[];
+  supportingPrompts: RecommendationEvidence[];
 }
 
 export interface AggregateStats {
@@ -125,7 +148,7 @@ export interface AggregateStats {
   topMissedOpportunities: MissedOpportunity[];
   possibleInaccuracies: InaccuracyEntry[];
   aiPositioningSummary: string;
-  recommendations: string[];
+  recommendations: Recommendation[];
 }
 
 export interface ModelAnalysis {
@@ -134,17 +157,38 @@ export interface ModelAnalysis {
   aggregateStats: AggregateStats;
 }
 
+export type AnalysisProviderName = AIModel | "deterministic" | "local-fallback";
+
+export interface AnalysisBatchUsage {
+  kind: "answers" | "analysis";
+  provider: AnalysisProviderName;
+  attempted: number;
+  succeeded: number;
+  failed: number;
+  promptsSucceeded: number;
+  promptsFailed: number;
+  retries: number;
+  timeouts: number;
+}
+
+export interface AnalysisProviderUsage {
+  model: AIModel;
+  promptCount: number;
+  answerProvider: AIModel | "local-fallback";
+  analyzerProvider: "gemini" | "deterministic";
+  answerBatches: AnalysisBatchUsage;
+  analysisBatches: AnalysisBatchUsage;
+  responsesFromProvider: number;
+  responsesFromFallback: number;
+  analysesFromProvider: number;
+  analysesFromFallback: number;
+}
+
 export interface AnalysisResponse {
   analysisMode?: AnalysisMode;
   models?: ModelAnalysis[];
   aggregateStats: AggregateStats;
   promptAnalyses: PromptAnalysis[];
+  providerUsage?: AnalysisProviderUsage[];
   cache?: CacheMetadata;
-}
-
-export interface SavedReport {
-  id: string;
-  createdAt: string;
-  company: CompanyInput;
-  analysis: AnalysisResponse;
 }

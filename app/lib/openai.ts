@@ -30,15 +30,29 @@ export function getOpenAIClient(): OpenAI {
   return client;
 }
 
-export async function queryGPT4oWithPrompt(prompt: string): Promise<string> {
+interface ProviderRequestOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+export async function queryGPT4oWithPrompt(
+  prompt: string,
+  options: ProviderRequestOptions = {},
+): Promise<string> {
   const openai = getOpenAIClient();
-  const response = await openai.responses.create({
-    model: GPT4O_MODEL,
-    input: prompt,
-    max_output_tokens: 300,
-    temperature: 0.7,
-    store: false,
-  });
+  const response = await openai.responses.create(
+    {
+      model: GPT4O_MODEL,
+      input: prompt,
+      max_output_tokens: 300,
+      temperature: 0.7,
+      store: false,
+    },
+    {
+      ...(options.timeoutMs ? { timeout: options.timeoutMs } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+    },
+  );
   return response.output_text ?? "";
 }
 
@@ -110,16 +124,25 @@ export function extractOpenAIWebSources(response: unknown) {
   );
 }
 
-export async function queryGPT4oWithWebPrompt(prompt: string): Promise<ModelAnswer> {
+export async function queryGPT4oWithWebPrompt(
+  prompt: string,
+  options: ProviderRequestOptions = {},
+): Promise<ModelAnswer> {
   const openai = getOpenAIClient();
-  const response = await openai.responses.create({
-    model: GPT4O_MODEL,
-    input: prompt,
-    tools: [{ type: "web_search", search_context_size: "low" }],
-    max_output_tokens: 300,
-    temperature: 0.7,
-    store: false,
-  });
+  const response = await openai.responses.create(
+    {
+      model: GPT4O_MODEL,
+      input: prompt,
+      tools: [{ type: "web_search", search_context_size: "low" }],
+      max_output_tokens: 300,
+      temperature: 0.7,
+      store: false,
+    },
+    {
+      ...(options.timeoutMs ? { timeout: options.timeoutMs } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+    },
+  );
 
   const sources = extractOpenAIWebSources(response);
 

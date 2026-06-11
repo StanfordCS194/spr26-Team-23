@@ -26,6 +26,8 @@ interface GenerateOptions {
   expectJson?: boolean;
   maxOutputTokens?: number;
   temperature?: number;
+  timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export async function generateText({
@@ -34,6 +36,8 @@ export async function generateText({
   expectJson,
   maxOutputTokens,
   temperature,
+  timeoutMs,
+  signal,
 }: GenerateOptions): Promise<string> {
   const ai = getGeminiClient();
 
@@ -45,18 +49,33 @@ export async function generateText({
       ...(expectJson ? { responseMimeType: "application/json" } : {}),
       ...(maxOutputTokens ? { maxOutputTokens } : {}),
       ...(typeof temperature === "number" ? { temperature } : {}),
+      ...(timeoutMs ? { httpOptions: { timeout: timeoutMs } } : {}),
+      ...(signal ? { abortSignal: signal } : {}),
     },
   });
 
   return response.text ?? "";
 }
 
-export async function queryGeminiWithPrompt(prompt: string): Promise<string> {
+interface ProviderRequestOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+export async function queryGeminiWithPrompt(
+  prompt: string,
+  options: ProviderRequestOptions = {},
+): Promise<string> {
   const ai = getGeminiClient();
   const response = await ai.models.generateContent({
     model: GEMINI_MODEL,
     contents: prompt,
-    config: { maxOutputTokens: 300, temperature: 0.7 },
+    config: {
+      maxOutputTokens: 300,
+      temperature: 0.7,
+      ...(options.timeoutMs ? { httpOptions: { timeout: options.timeoutMs } } : {}),
+      ...(options.signal ? { abortSignal: options.signal } : {}),
+    },
   });
   return response.text ?? "";
 }
@@ -105,7 +124,10 @@ export function extractGeminiWebAnswer(response: GeminiGroundingResponse): Model
   };
 }
 
-export async function queryGeminiWithWebPrompt(prompt: string): Promise<ModelAnswer> {
+export async function queryGeminiWithWebPrompt(
+  prompt: string,
+  options: ProviderRequestOptions = {},
+): Promise<ModelAnswer> {
   const ai = getGeminiClient();
   const response = await ai.models.generateContent({
     model: GEMINI_MODEL,
@@ -114,6 +136,8 @@ export async function queryGeminiWithWebPrompt(prompt: string): Promise<ModelAns
       maxOutputTokens: 300,
       temperature: 0.7,
       tools: [{ googleSearch: {} }],
+      ...(options.timeoutMs ? { httpOptions: { timeout: options.timeoutMs } } : {}),
+      ...(options.signal ? { abortSignal: options.signal } : {}),
     },
   });
 
