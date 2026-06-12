@@ -12,6 +12,11 @@ import {
 import { AnalysisResponse, CompanyInput } from "@/types";
 import { NextResponse } from "next/server";
 
+export const runtime = "nodejs";
+// Homepage fetch (up to 12s) + existing /llms.txt fetch + Gemini generation can exceed
+// the platform default serverless timeout; give the function room so it doesn't 504.
+export const maxDuration = 60;
+
 interface GenerateLlmsTxtBody {
   company?: CompanyInput;
   analysis?: AnalysisResponse;
