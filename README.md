@@ -11,6 +11,6 @@ See environment set up [here](https://github.com/StanfordCS194/spr26-Team-23/blo
 ## Contributors
  
 - Ameya Jadhav
-- Khushi Kukadi
+- Khushi Kukadia
 - Ryan Chan
 - Aryan Siddiqui
