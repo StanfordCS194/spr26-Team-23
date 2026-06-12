@@ -217,19 +217,19 @@ export function TunnelInputForm() {
     setActiveSuggestionIndex(-1);
 
     setEnriching(true);
-    fetch("/api/enrich-company", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ domain: suggestion.domain, name: suggestion.name }),
-    })
+    fetch(
+      `https://api.duckduckgo.com/?q=${encodeURIComponent(suggestion.name + " company")}&format=json&no_redirect=1&no_html=1`,
+    )
       .then((r) => r.json())
-      .then((data: { ok?: boolean; description?: string; category?: string; competitors?: string[] }) => {
-        if (!data.ok) return;
+      .then((data: { Abstract?: string; Infobox?: { content?: Array<{ label: string; value: string }> } }) => {
+        const description = data.Abstract ?? "";
+        const industryItem = data.Infobox?.content?.find((c) => c.label === "Industry");
+        const category = typeof industryItem?.value === "string" ? industryItem.value : "";
+        if (!description && !category) return;
         setForm((prev) => ({
           ...prev,
-          ...(data.description ? { description: data.description } : {}),
-          ...(data.category ? { category: data.category } : {}),
-          ...(data.competitors?.length ? { competitors: data.competitors } : {}),
+          ...(description ? { description } : {}),
+          ...(category ? { category } : {}),
         }));
       })
       .catch(() => { /* enrichment is non-critical */ })

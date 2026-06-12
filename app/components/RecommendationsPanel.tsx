@@ -105,8 +105,8 @@ export function RecommendationsPanel({ stats }: RecommendationsPanelProps) {
                   Content ideas
                 </p>
                 <ul className="mt-1 space-y-1">
-                  {rec.contentIdeas.slice(0, 3).map((idea) => (
-                    <li key={idea} className="font-medium text-slate-800">
+                  {rec.contentIdeas.slice(0, 3).map((idea, i) => (
+                    <li key={i} className="font-medium text-slate-800">
                       {idea}
                     </li>
                   ))}
